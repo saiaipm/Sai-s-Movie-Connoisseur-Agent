@@ -1,5 +1,15 @@
-[theme]
-base = "dark"
+# No `base` key here on purpose. Setting base = "dark" pins the app to one
+# theme and makes the built-in appearance toggle a no-op. Defining both
+# variants instead lets the viewer choose via ⋮ → Settings → Appearance, and
+# defaults to their system preference.
+
+[theme.light]
+primaryColor = "#9A6B12"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F1EC"
+textColor = "#1A1A20"
+
+[theme.dark]
 primaryColor = "#E8B04B"
 backgroundColor = "#12131A"
 secondaryBackgroundColor = "#1C1E28"
