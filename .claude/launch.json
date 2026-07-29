@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "movie-connoisseur",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "streamlit", "run", "app.py", "--server.port", "8501"],
+      "port": 8501
+    }
+  ]
+}

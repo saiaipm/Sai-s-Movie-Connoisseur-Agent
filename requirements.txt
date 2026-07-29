@@ -1,0 +1,14 @@
+# Streamlit Community Cloud installs from this file — it does not read
+# pyproject.toml and does not use uv. Keep in sync with [project.dependencies].
+#
+# Direct dependencies only, with lower bounds rather than exact pins, so the
+# resolver can pick wheels matching Cloud's Python version.
+
+google-adk>=2.5.0
+google-genai>=1.0.0
+litellm>=1.55.0
+gspread>=6.2.0
+google-auth>=2.30.0
+requests>=2.32.0
+streamlit>=1.38.0
+python-dotenv>=1.0.1

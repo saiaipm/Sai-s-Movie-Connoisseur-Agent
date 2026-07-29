@@ -1,0 +1,36 @@
+[project]
+name = "movie-connoisseur"
+version = "0.1.0"
+description = "Conversational multi-agent assistant for Indian OTT movie discovery, metadata and journaling"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "google-adk>=1.0.0",
+    "google-genai>=1.0.0",
+    "gspread>=6.1.0",
+    "google-auth>=2.30.0",
+    "requests>=2.32.0",
+    "streamlit>=1.38.0",
+    "python-dotenv>=1.0.1",
+    # Required by the default provider (NVIDIA NIM) and by MODEL_PROVIDER=openai.
+    "litellm>=1.55.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[tool.uv]
+# The project lives under OneDrive, where uv's default hardlinking fails with
+# "cannot be performed on a file with incompatible hardlinks" (os error 396).
+link-mode = "copy"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["movie_connoisseur"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
