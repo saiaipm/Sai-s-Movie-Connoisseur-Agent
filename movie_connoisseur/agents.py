@@ -84,7 +84,17 @@ def build_model(provider: str = "", model_name: str = ""):
     )
 
 
-MODEL = build_model()
+# Building the model must not raise at import time. A missing key is a
+# configuration problem the UI can explain — if it escapes from here it becomes
+# an unreadable stack trace before the app can render anything at all.
+MODEL_ERROR = ""
+try:
+    MODEL = build_model()
+except (RuntimeError, ValueError) as exc:
+    MODEL_ERROR = str(exc)
+    # Placeholder so the agent tree still constructs. Nothing can call it:
+    # missing_credentials() reports the problem and the UI stops first.
+    MODEL = config.MODEL_NAME
 
 
 # Note: NVIDIA's `/no_think` directive does suppress Nemotron's visible

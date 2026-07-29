@@ -118,6 +118,36 @@ def test_unknown_provider_is_rejected(monkeypatch):
         agents.build_model()
 
 
+def test_importing_agents_without_a_key_does_not_raise(monkeypatch):
+    """A missing key must degrade to a UI message, not a crash at import.
+
+    Regression: the first Streamlit Cloud deploy died with a redacted
+    RuntimeError from `MODEL = build_model()` before anything could render.
+    """
+    import importlib
+
+    # Set the attribute rather than the environment: get_secret also falls back
+    # to st.secrets, which reads .streamlit/secrets.toml if a developer has one,
+    # so clearing os.environ alone does not guarantee an unset key.
+    monkeypatch.setattr(config, "MODEL_PROVIDER", "nvidia")
+    monkeypatch.setattr(config, "NVIDIA_API_KEY", "")
+
+    reloaded = importlib.reload(agents)
+    try:
+        assert reloaded.MODEL_ERROR
+        assert "NVIDIA_API_KEY" in reloaded.MODEL_ERROR
+        # The tree must still exist so the app can import and explain itself.
+        assert reloaded.root_agent is not None
+        assert "NVIDIA_API_KEY" in reloaded.missing_credentials()
+    finally:
+        monkeypatch.undo()
+        importlib.reload(agents)
+
+
+def test_no_model_error_when_configured():
+    assert agents.MODEL_ERROR == ""
+
+
 def test_missing_credentials_lists_what_is_absent(monkeypatch):
     monkeypatch.setattr(config, "MODEL_PROVIDER", "gemini")
     monkeypatch.setattr(config, "TMDB_API_KEY", "")

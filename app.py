@@ -12,7 +12,7 @@ from __future__ import annotations
 import streamlit as st
 
 from movie_connoisseur import config
-from movie_connoisseur.agents import missing_credentials
+from movie_connoisseur.agents import MODEL_ERROR, missing_credentials
 from movie_connoisseur.chat import MovieChat
 from movie_connoisseur.tools import journal, tmdb
 
@@ -100,6 +100,8 @@ def render_sidebar() -> None:
         if missing:
             st.error("Missing credentials:\n\n" + "\n".join(f"- `{m}`" for m in missing))
             st.caption("Add them to `.env` (local) or app secrets (Streamlit Cloud).")
+        elif MODEL_ERROR:
+            st.error(f"Model not available:\n\n{MODEL_ERROR}")
         else:
             st.success("All credentials configured")
 
@@ -360,9 +362,16 @@ def render_watchlist_tab() -> None:
 
 render_sidebar()
 
-if missing_credentials():
-    st.title("Movie Connoisseur")
-    st.warning("Add the missing credentials listed in the sidebar, then reload.")
+if missing_credentials() or MODEL_ERROR:
+    st.title("🍿 Movie Connoisseur")
+    st.warning(
+        "This app is not fully configured yet — see the sidebar for what is "
+        "missing, add it to the app's secrets, and reload."
+    )
+    st.caption(
+        "On Streamlit Cloud: Manage app → Settings → Secrets. "
+        "Locally: the `.env` file in the project root."
+    )
     st.stop()
 
 chat_tab, journal_tab, watchlist_tab = st.tabs(
