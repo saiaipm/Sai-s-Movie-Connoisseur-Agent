@@ -332,6 +332,52 @@ def test_empty_discover_result_is_success_not_error(captured_request):
     assert "message" in result
 
 
+# --- Service account credential parsing ------------------------------------
+
+_FAKE_KEY = "-----BEGIN PRIVATE KEY-----\\nMIIabc\\nxyz==\\n-----END PRIVATE KEY-----\\n"
+_FAKE_SA = (
+    '{"type": "service_account", "client_email": "a@b.iam.gserviceaccount.com", '
+    f'"private_key": "{_FAKE_KEY}"}}'
+)
+
+
+def test_service_account_accepts_inline_json(monkeypatch):
+    monkeypatch.setattr(config, "GOOGLE_SERVICE_ACCOUNT_JSON", _FAKE_SA)
+    info = config.service_account_info()
+    assert info["client_email"] == "a@b.iam.gserviceaccount.com"
+    assert info["private_key"].startswith("-----BEGIN PRIVATE KEY-----")
+
+
+def test_service_account_reads_a_file_path(monkeypatch, tmp_path):
+    path = tmp_path / "sa.json"
+    path.write_text(_FAKE_SA, encoding="utf-8")
+    monkeypatch.setattr(config, "GOOGLE_SERVICE_ACCOUNT_JSON", str(path))
+    assert config.service_account_info()["client_email"] == "a@b.iam.gserviceaccount.com"
+
+
+def test_toml_basic_string_mangling_is_explained(monkeypatch):
+    """A `\"\"\"` block in secrets.toml turns \\n escapes into real newlines.
+
+    That is invalid JSON, and the raw JSONDecodeError gives no clue why. The
+    error must name the actual cause. This broke the first deployment.
+    """
+    mangled = _FAKE_SA.replace("\\n", "\n")
+    monkeypatch.setattr(config, "GOOGLE_SERVICE_ACCOUNT_JSON", mangled)
+
+    with pytest.raises(ValueError) as exc:
+        config.service_account_info()
+
+    message = str(exc.value)
+    assert "'''" in message
+    assert "private_key" in message
+
+
+def test_missing_service_account_is_reported(monkeypatch):
+    monkeypatch.setattr(config, "GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    with pytest.raises(ValueError, match="GOOGLE_SERVICE_ACCOUNT_JSON"):
+        config.service_account_info()
+
+
 # --- Journal helpers -------------------------------------------------------
 
 

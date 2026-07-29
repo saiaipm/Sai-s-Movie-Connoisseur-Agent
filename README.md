@@ -199,6 +199,11 @@ collapses on mobile), and on both data tabs.
    `.streamlit/secrets.toml.example` with real values. **Do not add
    `WRITE_ENABLED`** — leaving it out is what keeps the app read-only.
 
+   Wrap the service account JSON in `'''` (triple **single** quotes). TOML
+   treats `"""` as a basic string and expands the `\n` escapes inside
+   `private_key` into real newlines, which makes the JSON invalid — the app
+   then fails with a `JSONDecodeError` on the Journal tab.
+
 Cloud installs from `requirements.txt`, not `pyproject.toml`.
 
 Note that NVIDIA NIM's free credits are finite. When they run out the app will

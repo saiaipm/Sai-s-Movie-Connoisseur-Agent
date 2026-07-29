@@ -144,7 +144,20 @@ def service_account_info() -> dict:
         )
 
     if raw.startswith("{"):
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            # Almost always a TOML quoting mistake: `"""` in secrets.toml is a
+            # *basic* string and expands the `\n` escapes inside private_key
+            # into real newlines, which are illegal inside a JSON string.
+            # `'''` is a literal string and leaves them intact.
+            raise ValueError(
+                "GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON "
+                f"({exc.msg} at line {exc.lineno}). If you pasted it into "
+                "Streamlit secrets, wrap it in ''' triple-single-quotes, not "
+                '""" triple-double-quotes — the latter mangles the \\n escapes '
+                "in private_key."
+            ) from exc
 
     key_path = Path(raw)
     if not key_path.is_absolute():

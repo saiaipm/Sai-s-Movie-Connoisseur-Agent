@@ -141,3 +141,18 @@ spends the owner's API quota. `MAX_MESSAGES_PER_SESSION` caps this (defaults to
 
 Never commit `.env`, `service_account.json` or `.streamlit/secrets.toml` (all
 gitignored).
+
+**Streamlit secrets gotchas, both hit in production:**
+
+- The service account JSON must be wrapped in `'''`, not `"""`. TOML basic
+  strings (`"""`) expand the `\n` escapes inside `private_key` into real
+  newlines, producing invalid JSON. `service_account_info()` catches this and
+  explains it rather than surfacing a bare `JSONDecodeError`.
+- `get_secret` falls back to `st.secrets`, which reads a local
+  `.streamlit/secrets.toml` if one exists. That file is therefore a **live
+  local config source**, not just a clipboard for deployment — a stale copy can
+  shadow what you expect. Environment variables still take precedence.
+
+Nothing may raise at import time on a misconfigured deploy: `build_model()`
+failures are captured as `agents.MODEL_ERROR` and rendered by the UI, because a
+raised exception there kills the app before it can explain itself.
