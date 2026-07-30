@@ -125,15 +125,13 @@ Ground rules:
   handle, just handle it.
 """
 
-discovery_agent = LlmAgent(
-    name="discovery_agent",
-    model=MODEL,
-    description=(
-        "Finds movies to watch: searches by OTT platform, genre, release year, "
-        "language or rating, and answers which platforms are supported. Use for "
-        "browsing and recommendations rather than questions about one known film."
-    ),
-    instruction="""\
+DISCOVERY_DESCRIPTION = (
+    "Finds movies to watch: searches by OTT platform, genre, release year, "
+    "language or rating, and answers which platforms are supported. Use for "
+    "browsing and recommendations rather than questions about one known film."
+)
+
+DISCOVERY_INSTRUCTION = """\
 You help the user find something to watch on Indian streaming platforms.
 
 Call `fetch_ott_movies` with whatever filters the user gave. Leave the rest
@@ -159,19 +157,15 @@ suggest loosening a filter — do not substitute titles from memory.
 If the user then asks about one of these films in depth, hand off to
 critic_agent. If they want to log one as watched, or save one for later on
 their watchlist, hand off to journal_agent.
-""",
-    tools=[fetch_ott_movies, search_movies, list_ott_providers],
+"""
+
+CRITIC_DESCRIPTION = (
+    "Answers questions about a specific known movie: plot, cast, director, "
+    "crew, runtime, age rating, community rating, and where it streams in "
+    "India. Also helps the user decide whether to watch it."
 )
 
-critic_agent = LlmAgent(
-    name="critic_agent",
-    model=MODEL,
-    description=(
-        "Answers questions about a specific known movie: plot, cast, director, "
-        "crew, runtime, age rating, community rating, and where it streams in "
-        "India. Also helps the user decide whether to watch it."
-    ),
-    instruction="""\
+CRITIC_INSTRUCTION = """\
 You give the user the full picture on a specific film.
 
 Call `fetch_movie_details` with the title — it resolves the title itself, so
@@ -193,9 +187,7 @@ rating, genre and cast the tool returned — not a hedge.
 
 If the user wants to log it as watched, or save it to their watchlist, hand off
 to journal_agent.
-""",
-    tools=[fetch_movie_details, fetch_movie_credits, search_movies],
-)
+"""
 
 _JOURNAL_LOGGING_INSTRUCTION = """\
 **Logging** — call `add_to_journal(title, platform, rating, review, watch_date)`.
@@ -240,20 +232,20 @@ talk about the film instead. Do not pretend to have saved anything.
 You can still call `get_journal_history` and `get_watchlist` to show them.
 """
 
-journal_agent = LlmAgent(
-    name="journal_agent",
-    model=MODEL,
-    description=(
-        "Reads the user's personal movie records in Google Sheets: their diary "
-        "of watched films, their watchlist of films to watch later, and "
-        "shareable summaries."
-        if config.DEMO_MODE
-        else "Manages the user's personal movie records in Google Sheets: logging a "
-        "watched film with a rating and review, reading back watch history, "
-        "adding and removing films on their watchlist, and formatting entries "
-        "to share with friends."
-    ),
-    instruction="""\
+JOURNAL_DESCRIPTION_READONLY = (
+    "Reads the user's personal movie records in Google Sheets: their diary "
+    "of watched films, their watchlist of films to watch later, and "
+    "shareable summaries."
+)
+
+JOURNAL_DESCRIPTION_FULL = (
+    "Manages the user's personal movie records in Google Sheets: logging a "
+    "watched film with a rating and review, reading back watch history, "
+    "adding and removing films on their watchlist, and formatting entries "
+    "to share with friends."
+)
+
+_JOURNAL_PREAMBLE = """\
 You keep the user's movie journal and watchlist in their Google Sheet.
 
 The journal is what they have **already watched**. The watchlist is what they
@@ -261,12 +253,8 @@ The journal is what they have **already watched**. The watchlist is what they
 X" is a watchlist add.
 
 """
-    + (
-        _JOURNAL_READONLY_INSTRUCTION
-        if config.DEMO_MODE
-        else _JOURNAL_LOGGING_INSTRUCTION + "\n" + _WATCHLIST_INSTRUCTION
-    )
-    + """
+
+_JOURNAL_EPILOGUE = """
 **Reading back** — call `get_journal_history(limit, filter_rating)`. Use
 filter_rating only when the user asks for their favourites or highly rated ones.
 
@@ -276,29 +264,15 @@ rewrite or reformat that card.
 
 If asked about a film's details rather than their own records, hand off to
 critic_agent.
-""",
-    tools=(
-        [get_journal_history, get_watchlist, generate_shareable_summary]
-        if config.DEMO_MODE
-        else [
-            add_to_journal,
-            get_journal_history,
-            generate_shareable_summary,
-            add_to_watchlist,
-            get_watchlist,
-            remove_from_watchlist,
-            # Needed for the confirm-before-adding step on the watchlist.
-            search_movies,
-        ]
-    ),
-)
+"""
 
-coordinator_agent = LlmAgent(
-    name="movie_connoisseur",
-    model=MODEL,
-    global_instruction=GLOBAL_INSTRUCTION,
-    description="Routes movie requests to the discovery, critic or journal specialist.",
-    instruction="""\
+# Read-only tools, safe for any visitor.
+READ_TOOLS = [get_journal_history, get_watchlist, generate_shareable_summary]
+
+# Tools that mutate the owner's spreadsheet. Withheld unless writes are allowed.
+WRITE_TOOLS = [add_to_journal, add_to_watchlist, remove_from_watchlist]
+
+COORDINATOR_INSTRUCTION = """\
 You are the coordinator. Read the user's intent and transfer to the specialist
 that owns it. Do not answer movie questions yourself.
 
@@ -318,9 +292,78 @@ JioHotstar?"). Transfer for the first, and the next turn handles the rest.
 Only answer directly for greetings or questions about what you can do. In that
 case, briefly offer the three things you help with: finding what to watch,
 detailed information on a film, and keeping their movie journal.
-""",
-    sub_agents=[discovery_agent, critic_agent, journal_agent],
-)
+"""
+
+
+def build_agent_tree(write_enabled: bool | None = None) -> LlmAgent:
+    """Build a Coordinator with its three specialists.
+
+    A factory rather than module-level singletons because write permission is
+    per-visitor once sign-in is involved: the signed-in owner gets the write
+    tools, everyone else does not. Streamlit serves many sessions from one
+    process, so this must not be decided by a module global.
+
+    Args:
+        write_enabled: whether this tree may modify the owner's spreadsheet.
+            Defaults to the deployment-wide setting.
+    """
+    if write_enabled is None:
+        write_enabled = config.WRITE_ENABLED
+
+    discovery_agent = LlmAgent(
+        name="discovery_agent",
+        model=MODEL,
+        description=DISCOVERY_DESCRIPTION,
+        instruction=DISCOVERY_INSTRUCTION,
+        tools=[fetch_ott_movies, search_movies, list_ott_providers],
+    )
+
+    critic_agent = LlmAgent(
+        name="critic_agent",
+        model=MODEL,
+        description=CRITIC_DESCRIPTION,
+        instruction=CRITIC_INSTRUCTION,
+        tools=[fetch_movie_details, fetch_movie_credits, search_movies],
+    )
+
+    journal_agent = LlmAgent(
+        name="journal_agent",
+        model=MODEL,
+        description=(
+            JOURNAL_DESCRIPTION_FULL if write_enabled else JOURNAL_DESCRIPTION_READONLY
+        ),
+        instruction=(
+            _JOURNAL_PREAMBLE
+            + (
+                _JOURNAL_LOGGING_INSTRUCTION + "\n" + _WATCHLIST_INSTRUCTION
+                if write_enabled
+                else _JOURNAL_READONLY_INSTRUCTION
+            )
+            + _JOURNAL_EPILOGUE
+        ),
+        tools=(
+            # search_movies is needed for the confirm-before-adding step.
+            READ_TOOLS + WRITE_TOOLS + [search_movies]
+            if write_enabled
+            else list(READ_TOOLS)
+        ),
+    )
+
+    return LlmAgent(
+        name="movie_connoisseur",
+        model=MODEL,
+        global_instruction=GLOBAL_INSTRUCTION,
+        description=(
+            "Routes movie requests to the discovery, critic or journal specialist."
+        ),
+        instruction=COORDINATOR_INSTRUCTION,
+        sub_agents=[discovery_agent, critic_agent, journal_agent],
+    )
+
+
+# The deployment-default tree. Per-session trees are built by the UI.
+coordinator_agent = build_agent_tree()
+discovery_agent, critic_agent, journal_agent = coordinator_agent.sub_agents
 
 # ADK's CLI and web UI look for a module-level `root_agent`.
 root_agent = coordinator_agent

@@ -110,6 +110,11 @@ if _truthy(get_secret("DEMO_MODE", "false")):
 # Demo mode is simply the absence of write access.
 DEMO_MODE = not WRITE_ENABLED
 
+# The Google account allowed to write when signed in. This is how the deployed
+# app grants the owner full access without opening the sheet to everyone:
+# WRITE_ENABLED stays off, and permission is earned per-session by signing in.
+OWNER_EMAIL = get_secret("OWNER_EMAIL").strip()
+
 # Force the public demo onto the free provider, whatever the secrets say.
 # Runs after MODEL_PROVIDER/MODEL_NAME are resolved above.
 PROVIDER_WAS_FORCED = False

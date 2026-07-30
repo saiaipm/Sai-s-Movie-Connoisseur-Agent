@@ -167,9 +167,14 @@ The full app writes to the owner's Google Sheet. A public Streamlit app has **no
 authentication** — anyone with the URL would be writing to that sheet and
 spending the owner's API quota.
 
-**Writing is opt-in.** `WRITE_ENABLED` must be explicitly true; everything else
-is read-only. This is deliberately the inverse of the obvious design, so that a
-deployment where you forget to configure anything fails *closed*:
+**Writing is opt-in.** There are exactly two ways to get write access:
+
+1. `WRITE_ENABLED=true` — the deployment itself allows it (use this locally)
+2. **Signing in as `OWNER_EMAIL`** — permission earned per-session (use this on
+   a public deployment)
+
+This is deliberately the inverse of the obvious design, so that a deployment
+where you forget to configure anything fails *closed*:
 
 | | Local (`WRITE_ENABLED=true`) | Public (unset) |
 | :---- | :---- | :---- |
@@ -188,6 +193,31 @@ somewhere, as a belt-and-braces override.
 
 The read-only state is shown in the sidebar, in the chat pane (the sidebar
 collapses on mobile), and on both data tabs.
+
+### Owner sign-in
+
+So you can use the app fully from any device while the public stays read-only.
+Uses Streamlit's native Google OIDC — no passwords, no accounts of your own.
+
+**Permission is per-session, not global.** One Streamlit process serves every
+visitor at once, so it is carried in ADK session state and checked per tool
+call. A module-level flag would have leaked your write access to every
+anonymous visitor browsing at the same time.
+
+Setup:
+
+1. Google Cloud Console → **APIs & Services → Credentials → Create
+   Credentials → OAuth client ID**, type **Web application**.
+2. Add both Authorized redirect URIs:
+   - `https://<your-app>.streamlit.app/oauth2callback`
+   - `http://localhost:8501/oauth2callback`
+3. Configure the OAuth consent screen once. *External* is fine, and it can stay
+   in *Testing* with just your own account as a test user.
+4. Add `OWNER_EMAIL` and the `[auth]` block to secrets — see
+   `.streamlit/secrets.toml.example`. The `[auth]` tables must be **last** in
+   the file; TOML puts every key after a table header inside that table.
+
+Omit the `[auth]` block entirely and there is simply no sign-in button.
 
 ### Steps
 

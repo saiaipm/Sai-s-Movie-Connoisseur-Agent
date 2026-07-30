@@ -16,10 +16,19 @@ from datetime import date, datetime
 from typing import Any
 
 import gspread
+from google.adk.tools.tool_context import ToolContext
 from google.oauth2.service_account import Credentials
 
 from movie_connoisseur import config
 from movie_connoisseur.tools import tmdb
+
+# Key under which per-session write permission is stored in ADK session state.
+WRITE_ENABLED_STATE_KEY = "write_enabled"
+
+READ_ONLY_MESSAGE = (
+    "This is a read-only view — the journal and watchlist belong to the app's "
+    "owner. Sign in as the owner to make changes."
+)
 
 # Column positions are 1-indexed to match the A1 notation in the PRD schema.
 SHARED_STATUS_COLUMN = config.JOURNAL_HEADERS.index("Shared_Status") + 1
@@ -89,6 +98,26 @@ def reset_connection() -> None:
 
 
 # --- Helpers ---------------------------------------------------------------
+
+
+def writes_allowed(tool_context: ToolContext | None = None) -> bool:
+    """Whether the caller may modify the owner's spreadsheet.
+
+    Permission is per-session, carried in ADK session state, because one
+    Streamlit process serves many visitors: reading a module-level flag would
+    let the signed-in owner's permission leak to everyone else. The
+    deployment-wide setting is only the fallback for callers with no session
+    (scripts, tests).
+    """
+    if tool_context is not None:
+        state = getattr(tool_context, "state", None)
+        if state is not None:
+            try:
+                if WRITE_ENABLED_STATE_KEY in state:
+                    return bool(state[WRITE_ENABLED_STATE_KEY])
+            except TypeError:  # pragma: no cover - defensive
+                pass
+    return bool(config.WRITE_ENABLED)
 
 
 def _new_log_id() -> str:
@@ -167,6 +196,7 @@ def add_to_journal(
     rating: float = 0.0,
     review: str = "",
     watch_date: str = "",
+    tool_context: ToolContext = None,
 ) -> dict:
     """Log a watched movie to the user's Google Sheet movie journal.
 
@@ -186,16 +216,10 @@ def add_to_journal(
         dict with ``status`` and, on success, the stored entry including its
         generated ``log_id``.
     """
-    # The demo build also withholds this tool from the agent; this is the
-    # backstop so no code path can write to the owner's sheet in demo mode.
-    if config.DEMO_MODE:
-        return {
-            "status": "error",
-            "error_message": (
-                "Logging is disabled in this read-only demo. The journal shown "
-                "belongs to the app's owner."
-            ),
-        }
+    # The read-only build also withholds this tool from the agent; this is the
+    # backstop so no code path can write to the owner's sheet without permission.
+    if not writes_allowed(tool_context):
+        return {"status": "error", "error_message": READ_ONLY_MESSAGE}
 
     if not str(title).strip():
         return {"status": "error", "error_message": "A movie title is required."}
@@ -335,7 +359,9 @@ def _match_watchlist_rows(rows: list[dict[str, Any]], title: str) -> list[dict[s
     return [r for r in rows if wanted and wanted in str(r.get("Movie_Title", "")).lower()]
 
 
-def add_to_watchlist(title: str, notes: str = "") -> dict:
+def add_to_watchlist(
+    title: str, notes: str = "", tool_context: ToolContext = None
+) -> dict:
     """Add a movie the user wants to watch later to their watchlist.
 
     Confirm the exact film with the user before calling this — search first and
@@ -348,14 +374,8 @@ def add_to_watchlist(title: str, notes: str = "") -> dict:
     Returns:
         dict with ``status`` and, on success, the stored watchlist entry.
     """
-    if config.DEMO_MODE:
-        return {
-            "status": "error",
-            "error_message": (
-                "The watchlist is read-only in this demo. It belongs to the "
-                "app's owner."
-            ),
-        }
+    if not writes_allowed(tool_context):
+        return {"status": "error", "error_message": READ_ONLY_MESSAGE}
 
     if not str(title).strip():
         return {"status": "error", "error_message": "A movie title is required."}
@@ -449,7 +469,7 @@ def get_watchlist(limit: int = 20) -> dict:
     }
 
 
-def remove_from_watchlist(title: str) -> dict:
+def remove_from_watchlist(title: str, tool_context: ToolContext = None) -> dict:
     """Remove a movie from the user's watchlist.
 
     If several saved films match the title, this returns the candidates instead
@@ -463,14 +483,8 @@ def remove_from_watchlist(title: str) -> dict:
         dict with ``status``. On success, the removed entry. If the title is
         ambiguous, ``status`` is "error" with a ``candidates`` list.
     """
-    if config.DEMO_MODE:
-        return {
-            "status": "error",
-            "error_message": (
-                "The watchlist is read-only in this demo. It belongs to the "
-                "app's owner."
-            ),
-        }
+    if not writes_allowed(tool_context):
+        return {"status": "error", "error_message": READ_ONLY_MESSAGE}
 
     if not str(title).strip():
         return {"status": "error", "error_message": "A movie title is required."}
@@ -535,7 +549,9 @@ def _format_card(entries: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def generate_shareable_summary(log_ids: str = "", limit: int = 3) -> dict:
+def generate_shareable_summary(
+    log_ids: str = "", limit: int = 3, tool_context: ToolContext = None
+) -> dict:
     """Format journal entries into a shareable card for WhatsApp or social media.
 
     Marks the included entries as shared in the sheet.
@@ -577,8 +593,9 @@ def generate_shareable_summary(log_ids: str = "", limit: int = 3) -> dict:
     entries = [_to_entry(row) for row in selected]
 
     # Flag the shared rows so Shared_Status reflects what has gone out. Skipped
-    # in demo mode — the public app must not write to the owner's sheet.
-    if not config.DEMO_MODE:
+    # without write permission — a read-only visitor must not touch the sheet,
+    # but the card itself is still useful to them.
+    if writes_allowed(tool_context):
         try:
             worksheet = _worksheet()
             worksheet.batch_update(

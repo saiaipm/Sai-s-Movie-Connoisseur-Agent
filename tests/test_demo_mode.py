@@ -14,37 +14,54 @@ from movie_connoisseur import config
 from movie_connoisseur.tools import journal
 
 
-@pytest.fixture
-def demo_agents(monkeypatch):
-    """Reimport the agent tree with DEMO_MODE on."""
-    monkeypatch.setattr(config, "DEMO_MODE", True)
-    import movie_connoisseur.agents as agents_module
-
-    reloaded = importlib.reload(agents_module)
-    yield reloaded
-    # Restore the normal tree so later tests see the real toolset.
-    monkeypatch.setattr(config, "DEMO_MODE", False)
-    importlib.reload(agents_module)
-
-
 # Every tool that mutates the owner's spreadsheet.
 WRITE_TOOLS = {"add_to_journal", "add_to_watchlist", "remove_from_watchlist"}
 
 
-def test_demo_journal_agent_has_no_write_tools(demo_agents):
-    names = {t.__name__ for t in demo_agents.journal_agent.tools}
+@pytest.fixture
+def demo_tree():
+    """A read-only agent tree, as served to an anonymous visitor."""
+    import movie_connoisseur.agents as agents_module
+
+    return agents_module.build_agent_tree(write_enabled=False)
+
+
+def _journal_agent(tree):
+    return next(a for a in tree.sub_agents if a.name == "journal_agent")
+
+
+def test_demo_journal_agent_has_no_write_tools(demo_tree):
+    names = {t.__name__ for t in _journal_agent(demo_tree).tools}
     assert not (names & WRITE_TOOLS)
     assert names == {"get_journal_history", "get_watchlist", "generate_shareable_summary"}
 
 
-def test_no_agent_anywhere_can_write_in_demo_mode(demo_agents):
+def test_no_agent_anywhere_can_write_in_demo_mode(demo_tree):
     # Guards against a write tool being added to the wrong agent later.
-    for agent in demo_agents.coordinator_agent.sub_agents:
+    for agent in demo_tree.sub_agents:
         assert not ({t.__name__ for t in agent.tools} & WRITE_TOOLS)
 
 
-def test_demo_journal_agent_is_told_it_is_read_only(demo_agents):
-    assert "read-only" in demo_agents.journal_agent.instruction.lower()
+def test_write_tree_has_every_write_tool():
+    import movie_connoisseur.agents as agents_module
+
+    tree = agents_module.build_agent_tree(write_enabled=True)
+    names = {t.__name__ for t in _journal_agent(tree).tools}
+    assert WRITE_TOOLS <= names
+
+
+def test_the_two_trees_differ_only_in_write_capability():
+    import movie_connoisseur.agents as agents_module
+
+    ro = {t.__name__ for t in _journal_agent(agents_module.build_agent_tree(False)).tools}
+    rw = {t.__name__ for t in _journal_agent(agents_module.build_agent_tree(True)).tools}
+    # search_movies only exists to support confirm-before-adding.
+    assert rw - ro == WRITE_TOOLS | {"search_movies"}
+    assert ro - rw == set()
+
+
+def test_demo_journal_agent_is_told_it_is_read_only(demo_tree):
+    assert "read-only" in _journal_agent(demo_tree).instruction.lower()
 
 
 def test_normal_mode_keeps_the_write_tool():
@@ -54,12 +71,12 @@ def test_normal_mode_keeps_the_write_tool():
     assert "add_to_journal" in names
 
 
-def test_add_to_journal_refuses_in_demo_mode(monkeypatch):
+def test_add_to_journal_refuses_without_write_permission(monkeypatch):
     # Backstop: even if the tool is reachable, it must not write.
-    monkeypatch.setattr(config, "DEMO_MODE", True)
+    monkeypatch.setattr(config, "WRITE_ENABLED", False)
     result = journal.add_to_journal(title="Maharaja", rating=5.0)
     assert result["status"] == "error"
-    assert "read-only demo" in result["error_message"]
+    assert "read-only" in result["error_message"]
 
 
 def test_shareable_summary_does_not_write_shared_status_in_demo(monkeypatch):
@@ -76,11 +93,11 @@ def test_shareable_summary_does_not_write_shared_status_in_demo(monkeypatch):
             "_row": 2,
         }
     ]
-    monkeypatch.setattr(config, "DEMO_MODE", True)
+    monkeypatch.setattr(config, "WRITE_ENABLED", False)
     monkeypatch.setattr(journal, "_read_rows", lambda: rows)
 
     def fail_if_opened():
-        raise AssertionError("demo mode must not open the sheet for writing")
+        raise AssertionError("read-only mode must not open the sheet for writing")
 
     monkeypatch.setattr(journal, "_worksheet", fail_if_opened)
 
@@ -109,7 +126,7 @@ def test_shareable_summary_does_write_outside_demo_mode(monkeypatch):
         def batch_update(self, updates):
             written["updates"] = updates
 
-    monkeypatch.setattr(config, "DEMO_MODE", False)
+    monkeypatch.setattr(config, "WRITE_ENABLED", True)
     monkeypatch.setattr(journal, "_read_rows", lambda: rows)
     monkeypatch.setattr(journal, "_worksheet", lambda: FakeWorksheet())
 

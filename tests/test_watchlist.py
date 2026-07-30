@@ -230,11 +230,11 @@ def test_logging_leaves_watchlist_alone_when_not_present(monkeypatch):
         lambda: journal.remove_from_watchlist(title="Maharaja"),
     ],
 )
-def test_watchlist_writes_are_blocked_in_demo_mode(monkeypatch, call):
-    monkeypatch.setattr(config, "DEMO_MODE", True)
+def test_watchlist_writes_are_blocked_without_permission(monkeypatch, call):
+    monkeypatch.setattr(config, "WRITE_ENABLED", False)
 
     def fail_if_opened():
-        raise AssertionError("demo mode must not open the watchlist for writing")
+        raise AssertionError("read-only mode must not open the watchlist for writing")
 
     monkeypatch.setattr(journal, "_watchlist_worksheet", fail_if_opened)
 

@@ -18,7 +18,9 @@ from typing import Any
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
+from movie_connoisseur import config
 from movie_connoisseur.agents import root_agent
+from movie_connoisseur.tools.journal import WRITE_ENABLED_STATE_KEY
 
 APP_NAME = "movie_connoisseur"
 
@@ -91,10 +93,33 @@ def _describe_model_error(exc: Exception) -> tuple[str, int]:
 class MovieChat:
     """One conversation with the Movie Connoisseur agent tree."""
 
-    def __init__(self, user_id: str = "local_user", session_id: str = "") -> None:
+    def __init__(
+        self,
+        user_id: str = "local_user",
+        session_id: str = "",
+        write_enabled: bool | None = None,
+        agent=None,
+    ) -> None:
+        """Start a conversation.
+
+        Args:
+            user_id: identifier for the speaker.
+            session_id: reuse an existing ADK session, or blank for a new one.
+            write_enabled: whether this conversation may modify the owner's
+                spreadsheet. Defaults to the deployment-wide setting. Passed
+                into ADK session state so the write tools can check it
+                per-session rather than reading a module global.
+            agent: an agent tree, e.g. from ``build_agent_tree``. Defaults to
+                the module-level tree.
+        """
         self.user_id = user_id
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:12]}"
-        self._runner = InMemoryRunner(agent=root_agent, app_name=APP_NAME)
+        self.write_enabled = (
+            config.WRITE_ENABLED if write_enabled is None else bool(write_enabled)
+        )
+        self._runner = InMemoryRunner(
+            agent=agent if agent is not None else root_agent, app_name=APP_NAME
+        )
 
         # A dedicated loop keeps any loop-bound client inside the runner valid
         # across calls; asyncio.run() would build and tear down a new one each
@@ -102,7 +127,10 @@ class MovieChat:
         self._loop = asyncio.new_event_loop()
         self._run(
             self._runner.session_service.create_session(
-                app_name=APP_NAME, user_id=self.user_id, session_id=self.session_id
+                app_name=APP_NAME,
+                user_id=self.user_id,
+                session_id=self.session_id,
+                state={WRITE_ENABLED_STATE_KEY: self.write_enabled},
             )
         )
 

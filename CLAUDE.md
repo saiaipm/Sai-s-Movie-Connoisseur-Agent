@@ -99,12 +99,34 @@ models answering from memory instead of calling a tool.
   with `thought=True`; `chat.py` skips them. Without that filter the reply text
   is the model's internal monologue. This bit us once — don't remove it.
 
-## Demo mode / write access
+## Write access
 
 **Writing is opt-in: `WRITE_ENABLED` must be explicitly true, and `DEMO_MODE`
 is simply `not WRITE_ENABLED`.** This inversion is deliberate — a deployment
 that configures nothing must be read-only, never wide open. Do not "simplify"
 it back to a `DEMO_MODE` flag that defaults to false.
+
+Two routes to write access: `WRITE_ENABLED` (deployment-wide, used locally) or
+signing in as `OWNER_EMAIL` (per-session, used on the public deploy).
+
+### Permission is per-session — do not make it global
+
+One Streamlit process serves every visitor. Write permission therefore lives in
+**ADK session state** (`journal.WRITE_ENABLED_STATE_KEY`), set by `MovieChat`
+and read by `journal.writes_allowed(tool_context)` on each call. A module-level
+flag would leak the signed-in owner's access to concurrent anonymous visitors.
+
+This is why:
+- `agents.build_agent_tree(write_enabled)` is a factory, not module singletons —
+  the toolset and instructions differ per visitor
+- the three write tools take `tool_context: ToolContext = None`; ADK injects it
+  and **excludes it from the LLM schema**, so the model cannot forge permission
+- `config.WRITE_ENABLED` is only the fallback for callers with no session
+  (scripts, tests)
+
+`tests/test_write_permission.py` pins all of this down, including the leak case
+(deployment allows writes, session does not) and that `tool_context` never
+appears in a function declaration.
 
 `tests/conftest.py` pins writes on for the suite so tests do not depend on
 whether a developer's `.env` enables them. The reload-based tests in
