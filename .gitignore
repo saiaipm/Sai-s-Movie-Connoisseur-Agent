@@ -1,8 +1,14 @@
-# Secrets — never commit these
+# Secrets — never commit these.
+# The trailing * matters: a plain `.streamlit/secrets.toml` does not cover
+# copies like secrets.toml.bak, which hold exactly the same credentials.
 .env
+.env.*
+!.env.example
 service_account.json
 *service-account*.json
-.streamlit/secrets.toml
+.streamlit/secrets.toml*
+*.key
+*.pem
 
 # Python
 __pycache__/
