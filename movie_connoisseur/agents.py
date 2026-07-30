@@ -295,24 +295,29 @@ detailed information on a film, and keeping their movie journal.
 """
 
 
-def build_agent_tree(write_enabled: bool | None = None) -> LlmAgent:
+def build_agent_tree(write_enabled: bool | None = None, model=None) -> LlmAgent:
     """Build a Coordinator with its three specialists.
 
-    A factory rather than module-level singletons because write permission is
-    per-visitor once sign-in is involved: the signed-in owner gets the write
-    tools, everyone else does not. Streamlit serves many sessions from one
-    process, so this must not be decided by a module global.
+    A factory rather than module-level singletons because both write permission
+    and model choice are per-visitor once sign-in is involved: the signed-in
+    owner gets the write tools and may pick a provider, everyone else gets
+    neither. Streamlit serves many sessions from one process, so this must not
+    be decided by module globals.
 
     Args:
         write_enabled: whether this tree may modify the owner's spreadsheet.
             Defaults to the deployment-wide setting.
+        model: a model name or LiteLlm object from ``build_model``. Defaults to
+            the deployment-wide model.
     """
     if write_enabled is None:
         write_enabled = config.WRITE_ENABLED
+    if model is None:
+        model = MODEL
 
     discovery_agent = LlmAgent(
         name="discovery_agent",
-        model=MODEL,
+        model=model,
         description=DISCOVERY_DESCRIPTION,
         instruction=DISCOVERY_INSTRUCTION,
         tools=[fetch_ott_movies, search_movies, list_ott_providers],
@@ -320,7 +325,7 @@ def build_agent_tree(write_enabled: bool | None = None) -> LlmAgent:
 
     critic_agent = LlmAgent(
         name="critic_agent",
-        model=MODEL,
+        model=model,
         description=CRITIC_DESCRIPTION,
         instruction=CRITIC_INSTRUCTION,
         tools=[fetch_movie_details, fetch_movie_credits, search_movies],
@@ -328,7 +333,7 @@ def build_agent_tree(write_enabled: bool | None = None) -> LlmAgent:
 
     journal_agent = LlmAgent(
         name="journal_agent",
-        model=MODEL,
+        model=model,
         description=(
             JOURNAL_DESCRIPTION_FULL if write_enabled else JOURNAL_DESCRIPTION_READONLY
         ),
@@ -351,7 +356,7 @@ def build_agent_tree(write_enabled: bool | None = None) -> LlmAgent:
 
     return LlmAgent(
         name="movie_connoisseur",
-        model=MODEL,
+        model=model,
         global_instruction=GLOBAL_INSTRUCTION,
         description=(
             "Routes movie requests to the discovery, critic or journal specialist."

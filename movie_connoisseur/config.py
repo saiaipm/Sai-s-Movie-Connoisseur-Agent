@@ -83,6 +83,55 @@ MODEL_NAME = get_secret("MODEL_NAME") or DEFAULT_MODELS.get(
     MODEL_PROVIDER, DEFAULT_MODELS["gemini"]
 )
 
+# Human-readable labels for the owner's provider picker.
+PROVIDER_LABELS = {
+    "nvidia": "NVIDIA NIM (free)",
+    "gemini": "Google Gemini (free tier, rate-limited)",
+    "openai": "OpenAI (billed)",
+}
+
+
+def provider_key(provider: str) -> str:
+    """The API key configured for a provider, or empty if there is none."""
+    return {
+        "nvidia": NVIDIA_API_KEY,
+        "openai": OPENAI_API_KEY,
+        "gemini": GEMINI_API_KEY,
+    }.get(provider, "")
+
+
+def available_providers() -> list[str]:
+    """Providers that have a key configured, free one first.
+
+    Only these are offered in the picker — listing a provider whose key is
+    absent would just produce a runtime error when selected.
+    """
+    return [p for p in ("nvidia", "gemini", "openai") if provider_key(p)]
+
+
+def resolve_session_provider(trusted: bool, chosen: str = "") -> str:
+    """The model provider for one session.
+
+    ``trusted`` is the same flag that governs write access: either the
+    deployment enabled it (local development) or the visitor signed in as the
+    owner. Untrusted sessions are pinned to the free provider, so a visitor can
+    never cause a request to a billed one whatever the secrets contain.
+
+    Lives here rather than in the UI so it is testable without Streamlit.
+    """
+    if not trusted:
+        return FREE_PROVIDER
+    if chosen and chosen in available_providers():
+        return chosen
+    return MODEL_PROVIDER
+
+
+def default_model_for(provider: str) -> str:
+    """The model to use for a provider when nothing specific was requested."""
+    if provider == MODEL_PROVIDER and MODEL_NAME:
+        return MODEL_NAME
+    return DEFAULT_MODELS.get(provider, DEFAULT_MODELS["nvidia"])
+
 # Providers that cost money or burn a personal quota. The public demo is locked
 # to the free one so a stray secret or typo in the Streamlit dashboard cannot
 # start billing the owner.

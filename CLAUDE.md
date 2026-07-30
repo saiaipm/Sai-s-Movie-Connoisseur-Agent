@@ -85,6 +85,15 @@ Default model is `nvidia/nvidia-nemotron-nano-9b-v2` — free, 5/6 on the routin
 probe. `gemini-3.1-flash-lite` scores 6/6 but is quota-limited. Benchmarks and
 rejected candidates are in README.
 
+**Provider choice is per-session, like write access, and gated on the same
+`trusted` flag** (deployment `WRITE_ENABLED`, or signed in as owner). The rule
+lives in `config.resolve_session_provider()` — deliberately in config, not
+`app.py`, so it is testable without importing Streamlit. An untrusted session is
+pinned to `FREE_PROVIDER` whatever the secrets say, so a visitor can never spend
+money; the sidebar hiding the dropdown is cosmetic, not the guarantee.
+`config.default_model_for()` prevents one provider's model name leaking to
+another (`gpt-4o-mini` against NIM would 404).
+
 The whole architecture depends on function calling — routing between agents *is*
 a tool call (`transfer_to_agent`). **Never adopt a model without running
 `scripts/chat_cli.py --scenarios` first.** Failure modes seen in practice:

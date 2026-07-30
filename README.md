@@ -145,6 +145,16 @@ MODEL_PROVIDER=gemini
 Valid providers are `nvidia` (default), `gemini` and `openai`, each with its own
 default model. Set `MODEL_NAME` to override.
 
+**In the running app**, a provider dropdown appears in the sidebar for trusted
+sessions — locally, or on the deployment once signed in as the owner. It lists
+only providers that actually have a key configured, and switching restarts the
+conversation because the agent tree is rebuilt around the new model.
+
+Anonymous visitors never see it, and cannot reach a billed provider even if they
+try: `config.resolve_session_provider()` pins untrusted sessions to the free
+provider regardless of what the secrets contain, so the guarantee does not
+depend on the UI hiding a widget.
+
 Gemini's free tier caps non-lite flash models at 5 requests/minute; since one
 user turn costs 2–3 model calls, `gemini-3.6-flash` throttles almost
 immediately. `gemini-3.1-flash-lite` gets 15/min.

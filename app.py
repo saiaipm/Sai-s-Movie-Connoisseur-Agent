@@ -12,7 +12,12 @@ from __future__ import annotations
 import streamlit as st
 
 from movie_connoisseur import config
-from movie_connoisseur.agents import MODEL_ERROR, build_agent_tree, missing_credentials
+from movie_connoisseur.agents import (
+    MODEL_ERROR,
+    build_agent_tree,
+    build_model,
+    missing_credentials,
+)
 from movie_connoisseur.chat import MovieChat
 from movie_connoisseur.tools import journal, tmdb
 
@@ -88,6 +93,13 @@ def message_cap(write_enabled: bool) -> int:
     return 0 if write_enabled else config.MAX_MESSAGES_PER_SESSION
 
 
+def resolve_provider(trusted: bool) -> str:
+    """Which model provider to use for this session — see config for the rule."""
+    return config.resolve_session_provider(
+        trusted, st.session_state.get("provider", "")
+    )
+
+
 def resolve_permission() -> tuple[bool, str, bool]:
     """Decide whether *this visitor* may write.
 
@@ -110,21 +122,26 @@ def resolve_permission() -> tuple[bool, str, bool]:
 # --- State -----------------------------------------------------------------
 
 
-def get_chat(write_enabled: bool) -> MovieChat:
+def get_chat(write_enabled: bool, provider: str) -> MovieChat:
     """The conversation for this browser session.
 
-    Rebuilt if write permission changes, because the agent's toolset and
-    instructions differ — signing in must not leave a read-only tree in place.
+    Rebuilt if write permission or the provider changes: the agent's toolset,
+    instructions and model all differ, so signing in or switching provider must
+    not leave the previous tree in place.
     """
-    if st.session_state.get("chat_write_enabled") != write_enabled:
+    signature = (write_enabled, provider)
+    if st.session_state.get("chat_signature") != signature:
         reset_chat()
-        st.session_state.chat_write_enabled = write_enabled
+        st.session_state.chat_signature = signature
 
     if "chat" not in st.session_state:
         st.session_state.chat = MovieChat(
             user_id="streamlit_user",
             write_enabled=write_enabled,
-            agent=build_agent_tree(write_enabled=write_enabled),
+            agent=build_agent_tree(
+                write_enabled=write_enabled,
+                model=build_model(provider, config.default_model_for(provider)),
+            ),
         )
     return st.session_state.chat
 
@@ -155,6 +172,8 @@ def render_account(write_enabled: bool, email: str, is_owner: bool) -> None:
         return
 
     if email:
+        # Keyed to identity, not permission: locally WRITE_ENABLED can be true
+        # for a non-owner, and calling them "owner" would be wrong.
         if is_owner:
             st.success(f"Signed in as owner\n\n`{email}`")
         else:
@@ -173,7 +192,40 @@ def render_account(write_enabled: bool, email: str, is_owner: bool) -> None:
             st.login("google")
 
 
-def render_sidebar(write_enabled: bool, email: str, is_owner: bool) -> None:
+def render_provider_picker() -> None:
+    """Model provider picker, shown only to trusted sessions.
+
+    A visitor must never be able to select a billed provider.
+    config.resolve_session_provider() enforces that independently of whether
+    this widget is rendered, so the guarantee does not rest on the UI.
+    """
+    options = config.available_providers()
+    if len(options) < 2:
+        st.caption(
+            f"Only one provider has a key configured (`{options[0] if options else 'none'}`). "
+            "Add OPENAI_API_KEY or GEMINI_API_KEY to switch."
+        )
+        return
+
+    current = st.session_state.get("provider", config.MODEL_PROVIDER)
+    if current not in options:
+        current = options[0]
+
+    st.selectbox(
+        "Model provider",
+        options,
+        index=options.index(current),
+        format_func=lambda p: config.PROVIDER_LABELS.get(p, p),
+        key="provider",
+        help="Only you can change this. Visitors always use the free provider.",
+    )
+    if st.session_state.get("provider") == "openai":
+        st.caption("⚠️ OpenAI is billed per request.")
+
+
+def render_sidebar(
+    write_enabled: bool, email: str, is_owner: bool, provider: str
+) -> None:
     with st.sidebar:
         st.title("🍿 Movie Connoisseur")
         st.caption("Discover, research and journal movies on Indian OTT.")
@@ -206,13 +258,16 @@ def render_sidebar(write_enabled: bool, email: str, is_owner: bool) -> None:
             used = sum(1 for m in st.session_state.messages if m["role"] == "user")
             st.caption(f"{used}/{cap} messages used this session")
 
+        if write_enabled:
+            render_provider_picker()
+
         with st.expander("Configuration"):
-            st.write(f"**Provider:** {config.MODEL_PROVIDER}")
-            if config.PROVIDER_WAS_FORCED:
+            st.write(f"**Provider:** {provider}")
+            if not is_owner and config.PROVIDER_WAS_FORCED:
                 st.caption(
                     "The free provider was forced, overriding the configured one."
                 )
-            st.write(f"**Model:** `{config.MODEL_NAME}`")
+            st.write(f"**Model:** `{config.default_model_for(provider)}`")
             st.write(f"**Region:** {config.WATCH_REGION}")
             st.write(f"**Write access:** {'yes' if write_enabled else 'read-only'}")
             host = tmdb.active_host() or "not yet contacted"
@@ -240,7 +295,7 @@ def render_message(message: dict) -> None:
                         st.caption(call["error"])
 
 
-def answer(prompt: str, write_enabled: bool) -> None:
+def answer(prompt: str, write_enabled: bool, provider: str) -> None:
     """Send one message and append both sides to the transcript."""
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -248,7 +303,7 @@ def answer(prompt: str, write_enabled: bool) -> None:
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking…"):
-            turn = get_chat(write_enabled).send(prompt)
+            turn = get_chat(write_enabled, provider).send(prompt)
 
         if turn.agent:
             label = AGENT_LABELS.get(turn.agent, turn.agent)
@@ -276,7 +331,7 @@ def answer(prompt: str, write_enabled: bool) -> None:
     )
 
 
-def render_chat_tab(write_enabled: bool) -> None:
+def render_chat_tab(write_enabled: bool, provider: str) -> None:
     # The sidebar is collapsed by default on mobile, so the read-only notice
     # has to live in the main pane too or phone visitors never see it.
     if not write_enabled:
@@ -318,7 +373,7 @@ def render_chat_tab(write_enabled: bool) -> None:
     prompt = pending or typed
     if prompt:
         with transcript:
-            answer(prompt, write_enabled)
+            answer(prompt, write_enabled, provider)
         st.rerun()
 
 
@@ -446,8 +501,9 @@ def render_watchlist_tab(write_enabled: bool) -> None:
 # Resolved once per rerun and threaded through, so every part of the page agrees
 # on what this visitor may do.
 WRITE_ENABLED, USER_EMAIL, IS_OWNER = resolve_permission()
+PROVIDER = resolve_provider(WRITE_ENABLED)
 
-render_sidebar(WRITE_ENABLED, USER_EMAIL, IS_OWNER)
+render_sidebar(WRITE_ENABLED, USER_EMAIL, IS_OWNER, PROVIDER)
 
 if missing_credentials() or MODEL_ERROR:
     st.title("🍿 Movie Connoisseur")
@@ -466,7 +522,7 @@ chat_tab, journal_tab, watchlist_tab = st.tabs(
 )
 
 with chat_tab:
-    render_chat_tab(WRITE_ENABLED)
+    render_chat_tab(WRITE_ENABLED, PROVIDER)
 
 with journal_tab:
     render_journal_tab(WRITE_ENABLED)
