@@ -71,13 +71,44 @@ def _open_worksheet(title: str, headers: tuple[str, ...]) -> gspread.Worksheet:
     except gspread.WorksheetNotFound:
         worksheet = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers))
 
-    if worksheet.row_values(1) != list(headers):
-        worksheet.update(
-            [list(headers)],
-            range_name=f"A1:{chr(ord('A') + len(headers) - 1)}1",
-        )
-
+    _reconcile_headers(worksheet, list(headers))
     return worksheet
+
+
+def _column_letter(index: int) -> str:
+    """1-indexed column number to its A1 letter: 1 -> A, 15 -> O, 27 -> AA.
+
+    The obvious chr(ord('A') + n) breaks silently past column Z.
+    """
+    letters = ""
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(ord("A") + remainder) + letters
+    return letters
+
+
+def _reconcile_headers(worksheet, headers: list[str]) -> None:
+    """Ensure the header row starts with ``headers``, leaving extras alone.
+
+    Split out from _open_worksheet so it can be tested without Google.
+
+    Two rules, both learned the hard way:
+
+    - Only the columns this version owns are compared and rewritten. One
+      spreadsheet is shared by whatever version is running, so a newer build
+      may have appended columns; demanding an exact match would strip their
+      headers off and leave orphaned data underneath.
+    - The grid is widened first. Writing past the last column fails with
+      "exceeds grid limits" rather than growing the sheet.
+    """
+    if worksheet.col_count < len(headers):
+        worksheet.add_cols(len(headers) - worksheet.col_count)
+
+    existing = worksheet.row_values(1)
+    if existing[: len(headers)] != headers:
+        worksheet.update(
+            [headers], range_name=f"A1:{_column_letter(len(headers))}1"
+        )
 
 
 def _worksheet() -> gspread.Worksheet:
