@@ -277,6 +277,16 @@ def render_sidebar(
             st.write(f"**Model:** `{config.default_model_for(provider)}`")
             st.write(f"**Region:** {config.WATCH_REGION}")
             st.write(f"**Write access:** {'yes' if write_enabled else 'read-only'}")
+            # Absent OMDb degrades silently — ratings columns just stay empty —
+            # so it has to be visible somewhere.
+            if config.OMDB_API_KEY:
+                st.write("**Critic ratings:** OMDb configured")
+            else:
+                st.warning(
+                    "OMDB_API_KEY not set — IMDb, Rotten Tomatoes and "
+                    "Metacritic will be blank on anything logged from here.",
+                    icon="⚠️",
+                )
             host = tmdb.active_host() or "not yet contacted"
             st.write(f"**TMDB host:** `{host}`")
 

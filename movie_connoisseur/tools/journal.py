@@ -131,7 +131,7 @@ def reset_connection() -> None:
 # --- Helpers ---------------------------------------------------------------
 
 
-def _movie_metadata(title: str) -> dict[str, Any]:
+def _movie_metadata(title: str, media_type: str = "") -> dict[str, Any]:
     """Everything the sheets store about a film, from TMDB plus OMDb.
 
     Best effort throughout: a film that cannot be resolved, or ratings that do
@@ -154,7 +154,11 @@ def _movie_metadata(title: str) -> dict[str, Any]:
         "seasons": "",
     }
 
-    details = tmdb.fetch_title_details(title)
+    # media_type matters when `title` is actually a numeric TMDB ID: the same
+    # number identifies different things in the film and television
+    # catalogues, and a bare ID is assumed to be a film. Re-enriching a stored
+    # series by its ID without this looks up the wrong record entirely.
+    details = tmdb.fetch_title_details(title, media_type=media_type)
     if details.get("status") != "success":
         return blank
 

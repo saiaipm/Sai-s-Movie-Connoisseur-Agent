@@ -252,3 +252,71 @@ def test_ratings_or_blank_passes_values_through(omdb_returns):
         "rt_rating": 87,
         "metacritic": 74,
     }
+
+
+# --- Silent degradation without a key ---------------------------------------
+
+
+def test_missing_key_leaves_ratings_blank_without_failing_the_write(monkeypatch):
+    """The deployment bug this exists to catch.
+
+    OMDB_API_KEY was absent from the deployed secrets, so anything logged
+    there got a populated IMDb_ID (from TMDB) but three empty rating columns —
+    and nothing anywhere said why.
+    """
+    from movie_connoisseur.tools import journal, tmdb
+
+    monkeypatch.setattr(config, "OMDB_API_KEY", "")
+    monkeypatch.setattr(
+        tmdb,
+        "fetch_title_details",
+        lambda *_a, **_k: {
+            "status": "success",
+            "title": "Ted Lasso",
+            "tmdb_id": 97546,
+            "imdb_id": "tt10986410",
+            "media_type": "tv",
+            "seasons": 4,
+            "genres": ["Comedy"],
+            "streaming_in_india": ["Apple TV"],
+            "rating": 8.3,
+            "overview": "A coach.",
+        },
+    )
+
+    meta = journal._movie_metadata("Ted Lasso")
+
+    # Enrichment still succeeds and the row is still worth writing...
+    assert meta["title"] == "Ted Lasso"
+    assert meta["imdb_id"] == "tt10986410"
+    assert meta["media_type"] == "tv"
+    # ...but the OMDb-sourced columns are empty, which is the symptom to
+    # recognise: an imdb_id with no imdb_rating means the key is missing.
+    assert meta["imdb_rating"] == ""
+    assert meta["rt_rating"] == ""
+    assert meta["metacritic"] == ""
+
+
+def test_a_series_with_only_an_imdb_score_is_not_an_error(omdb_returns):
+    """Rotten Tomatoes and Metacritic are frequently absent for television.
+
+    Ted Lasso really does have only an IMDb score in OMDb — blank RT and
+    Metacritic there are correct, not a failure.
+    """
+    omdb_returns(
+        {
+            "Response": "True",
+            "Title": "Ted Lasso",
+            "Type": "series",
+            "imdbID": "tt10986410",
+            "imdbRating": "8.7",
+            "Metascore": "N/A",
+            "Ratings": [{"Source": "Internet Movie Database", "Value": "8.7/10"}],
+        }
+    )
+    result = omdb.fetch_external_ratings(imdb_id="tt10986410")
+
+    assert result["status"] == "success"
+    assert result["imdb_rating"] == 8.7
+    assert result["rt_rating"] == ""
+    assert result["metacritic"] == ""

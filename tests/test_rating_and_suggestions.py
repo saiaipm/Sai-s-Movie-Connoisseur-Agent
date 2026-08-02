@@ -229,3 +229,49 @@ def test_suggesting_needs_no_write_permission(monkeypatch):
         journal, "_read_watchlist_rows", lambda: [watch_row("X", 2, imdb="7.0")]
     )
     assert journal.suggest_from_watchlist()["status"] == "success"
+
+
+# --- Re-enriching a stored series by its ID ---------------------------------
+
+
+def test_media_type_travels_with_a_numeric_id(monkeypatch):
+    """A bare TMDB ID is read as a film unless told otherwise.
+
+    Re-enriching a stored series by its ID without passing Media_Type looked
+    up /movie/<tv id> — a different record, or none at all. The backfill
+    reported the series as "not resolvable on TMDB".
+    """
+    from movie_connoisseur.tools import journal as journal_mod
+    from movie_connoisseur.tools import tmdb
+
+    seen = {}
+
+    def fake_details(title_or_id, media_type=""):
+        seen["id"] = title_or_id
+        seen["media_type"] = media_type
+        return {"status": "error"}
+
+    monkeypatch.setattr(tmdb, "fetch_title_details", fake_details)
+
+    journal_mod._movie_metadata("97546", media_type="tv")
+
+    assert seen["id"] == "97546"
+    assert seen["media_type"] == "tv", "the catalogue must travel with the ID"
+
+
+def test_media_type_defaults_to_empty_for_titles(monkeypatch):
+    from movie_connoisseur.tools import journal as journal_mod
+    from movie_connoisseur.tools import tmdb
+
+    seen = {}
+    monkeypatch.setattr(
+        tmdb,
+        "fetch_title_details",
+        lambda t, media_type="": seen.update(media_type=media_type)
+        or {"status": "error"},
+    )
+
+    journal_mod._movie_metadata("Inception")
+
+    # A title is unambiguous enough for /search/multi to classify it.
+    assert seen["media_type"] == ""

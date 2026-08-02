@@ -65,11 +65,14 @@ def plan_for(rows, headers, force: bool):
             continue
 
         # Prefer the stored TMDB_ID: exact, and immune to title ambiguity like
-        # the three different films called Maharaja.
+        # the three different films called Maharaja. The stored Media_Type has
+        # to travel with it — the same ID means different things in the film
+        # and television catalogues, and a bare ID is read as a film.
         tmdb_id = str(row.get("TMDB_ID", "")).strip()
         lookup = tmdb_id if tmdb_id.isdigit() else title
+        media_type = str(row.get("Media_Type", "")).strip()
 
-        meta = journal._movie_metadata(lookup)
+        meta = journal._movie_metadata(lookup, media_type=media_type)
         if not meta["title"]:
             report.append((title, "fail", "not resolvable on TMDB"))
             continue
