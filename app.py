@@ -467,9 +467,12 @@ def _rating_cells(entry: dict) -> dict:
 
 # --- Journal statistics ----------------------------------------------------
 
-# Below this many entries a "top genre" is noise, not a finding. Better to say
-# so than to draw a one-bar chart and imply a pattern that is not there.
-MIN_FOR_BREAKDOWN = 5
+# A single bar implies a pattern that is not there, so below three entries the
+# breakdowns are withheld. Above that they are shown but labelled provisional
+# until the sample is worth trusting — hiding them entirely just made the
+# dashboard look broken, which is a worse failure than an honest caveat.
+MIN_FOR_BREAKDOWN = 3
+CONFIDENT_SAMPLE = 10
 MIN_FOR_CADENCE = 2  # distinct months
 
 
@@ -514,11 +517,16 @@ def render_journal_stats(entries: list[dict], total: int) -> None:
 
     if total < MIN_FOR_BREAKDOWN:
         st.caption(
-            f"Genre and platform breakdowns appear once you have logged "
-            f"{MIN_FOR_BREAKDOWN} titles — below that they say more about "
-            "chance than taste."
+            f"Log {MIN_FOR_BREAKDOWN} titles and the genre and platform "
+            "breakdowns appear here."
         )
         return
+
+    if total < CONFIDENT_SAMPLE:
+        st.caption(
+            f"⚠️ Based on {total} titles — treat these as provisional. Patterns "
+            f"get meaningful somewhere past {CONFIDENT_SAMPLE}."
+        )
 
     left, right = st.columns(2)
     with left:
