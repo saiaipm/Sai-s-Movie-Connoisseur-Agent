@@ -9,6 +9,7 @@ rerun-on-every-interaction model.
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from movie_connoisseur import config
@@ -377,6 +378,77 @@ def render_chat_tab(write_enabled: bool, provider: str) -> None:
         st.rerun()
 
 
+# --- Shared table helpers --------------------------------------------------
+
+
+def _number(value) -> float | None:
+    """Blank cells to None so a rating column stays numeric.
+
+    A mix of numbers and empty strings makes the column object-dtype, and
+    NumberColumn then refuses to format it.
+    """
+    if value in ("", None):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _numeric_frame(rows: list[dict], numeric: list[str]) -> pd.DataFrame:
+    """Build the table with genuinely numeric rating columns.
+
+    Coercing keeps the columns sortable and lets NumberColumn format them; a
+    column of mixed numbers and empty strings would be object dtype, which
+    NumberColumn refuses.
+
+    Missing values still show as a grey "None" — that is Streamlit's own
+    placeholder for a null and there is no column_config option to change it.
+    Rendering blanks instead would mean formatting these as strings, which
+    would cost the sorting the columns exist for.
+    """
+    frame = pd.DataFrame(rows)
+    for column in numeric:
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+NUMERIC_COLUMNS = ["Yours", "TMDB", "IMDb", "RT", "MC"]
+
+
+# Shared by both tables: same four sources, same scales, same formatting.
+RATING_COLUMNS = {
+    "TMDB": st.column_config.NumberColumn(
+        "TMDB", format="%.1f", help="TMDB community score, out of 10", width="small"
+    ),
+    "IMDb": st.column_config.NumberColumn(
+        "IMDb", format="%.1f", help="IMDb user score, out of 10", width="small"
+    ),
+    "RT": st.column_config.NumberColumn(
+        "RT", format="%d%%", help="Rotten Tomatoes, out of 100", width="small"
+    ),
+    "MC": st.column_config.NumberColumn(
+        "MC",
+        format="%d",
+        help="Metacritic, out of 100. Absent for most Indian films.",
+        width="small",
+    ),
+    "Synopsis": st.column_config.TextColumn(
+        "Synopsis", help="Click a cell to read the full text", width="medium"
+    ),
+}
+
+
+def _rating_cells(entry: dict) -> dict:
+    return {
+        "TMDB": _number(entry.get("tmdb_rating")),
+        "IMDb": _number(entry.get("imdb_rating")),
+        "RT": _number(entry.get("rt_rating")),
+        "MC": _number(entry.get("metacritic")),
+    }
+
+
 # --- Journal tab -----------------------------------------------------------
 
 
@@ -424,25 +496,42 @@ def render_journal_tab(write_enabled: bool) -> None:
     )
 
     st.dataframe(
-        [
-            {
-                "Date": e["watch_date"],
-                "Title": e["title"],
-                "Platform": e["platform"],
-                "Genre": e["genre"],
-                "Rating": e["rating"] or None,
-                "Review": e["review"],
-                "Shared": e["shared"],
-            }
-            for e in entries
-        ],
+        _numeric_frame(
+            [
+                {
+                    "Date": e["watch_date"],
+                    "Title": e["title"],
+                    "Platform": e["platform"],
+                    "Genre": e["genre"],
+                    "Yours": e["rating"] or None,
+                    **_rating_cells(e),
+                    "Review": e["review"],
+                    "Synopsis": e["synopsis"],
+                    "Shared": e["shared"],
+                }
+                for e in entries
+            ],
+            NUMERIC_COLUMNS,
+        ),
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Rating": st.column_config.NumberColumn(format="%.1f ⭐", min_value=0, max_value=5),
-            "Shared": st.column_config.CheckboxColumn(),
-            "Review": st.column_config.TextColumn(width="large"),
+            "Yours": st.column_config.NumberColumn(
+                "Yours",
+                format="%.1f ⭐",
+                min_value=0,
+                max_value=5,
+                help="Your own rating, out of 5",
+                width="small",
+            ),
+            **RATING_COLUMNS,
+            "Review": st.column_config.TextColumn(width="medium"),
+            "Shared": st.column_config.CheckboxColumn(width="small"),
         },
+    )
+    st.caption(
+        "Your rating is out of 5; TMDB and IMDb out of 10; RT and Metacritic "
+        "out of 100. \"None\" means that source has no score for the film."
     )
 
 
@@ -478,21 +567,41 @@ def render_watchlist_tab(write_enabled: bool) -> None:
         )
         return
 
-    st.metric("Films saved", result["total"])
+    rated = [_number(e.get("imdb_rating")) for e in entries]
+    rated = [r for r in rated if r is not None]
+
+    a, b = st.columns(2)
+    a.metric("Films saved", result["total"])
+    b.metric(
+        "Average IMDb", f"{sum(rated) / len(rated):.1f}/10" if rated else "—"
+    )
+
     st.dataframe(
-        [
-            {
-                "Added": e["added_date"],
-                "Title": e["title"],
-                "Platform": e["platform"],
-                "Genre": e["genre"],
-                "Notes": e["notes"],
-            }
-            for e in entries
-        ],
+        _numeric_frame(
+            [
+                {
+                    "Added": e["added_date"],
+                    "Title": e["title"],
+                    "Platform": e["platform"],
+                    "Genre": e["genre"],
+                    **_rating_cells(e),
+                    "Notes": e["notes"],
+                    "Synopsis": e["synopsis"],
+                }
+                for e in entries
+            ],
+            NUMERIC_COLUMNS,
+        ),
         use_container_width=True,
         hide_index=True,
-        column_config={"Notes": st.column_config.TextColumn(width="large")},
+        column_config={
+            **RATING_COLUMNS,
+            "Notes": st.column_config.TextColumn(width="medium"),
+        },
+    )
+    st.caption(
+        "TMDB and IMDb are out of 10; RT and Metacritic out of 100. \"None\" means "
+        "that source has no score for the film."
     )
 
 
