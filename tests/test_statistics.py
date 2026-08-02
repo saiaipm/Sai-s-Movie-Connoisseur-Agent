@@ -136,3 +136,40 @@ def test_empty_journal_is_safe():
     assert stats["total"] == 0
     assert stats["genres"] == []
     assert stats["taste"] is None
+
+
+# --- Platform normalisation -------------------------------------------------
+
+
+def test_platform_aliases_collapse_to_one_name():
+    """"Prime Video" and "Amazon Prime Video" are one service.
+
+    Stored verbatim they became two bars in the platform breakdown.
+    """
+    from movie_connoisseur.tools.tmdb import canonical_platform
+
+    assert canonical_platform("Prime Video") == "Amazon Prime Video"
+    assert canonical_platform("Amazon Prime Video") == "Amazon Prime Video"
+    assert canonical_platform("prime") == "Amazon Prime Video"
+    # The retired names still resolve to the merged service.
+    assert canonical_platform("Hotstar") == "JioHotstar"
+    assert canonical_platform("JioCinema") == "JioHotstar"
+
+
+def test_unknown_platform_is_kept_as_typed():
+    # A service we do not know about is still the user's answer.
+    from movie_connoisseur.tools.tmdb import canonical_platform
+
+    assert canonical_platform("Mubi India") == "Mubi India"
+    assert canonical_platform("") == ""
+
+
+def test_aliases_are_counted_together_in_the_breakdown():
+    stats = summarise_entries(
+        [
+            entry(platform="Amazon Prime Video"),
+            entry(platform="Amazon Prime Video"),
+            entry(platform="Netflix"),
+        ]
+    )
+    assert stats["platforms"][0] == ("Amazon Prime Video", 2)

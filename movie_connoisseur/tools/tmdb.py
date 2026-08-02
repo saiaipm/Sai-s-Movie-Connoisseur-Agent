@@ -103,6 +103,24 @@ def resolve_provider(provider: str) -> int | None:
     return None
 
 
+def canonical_platform(name: str) -> str:
+    """Return the one agreed spelling for an OTT platform.
+
+    "Prime Video" and "Amazon Prime Video" are the same service, but stored
+    verbatim they become two rows in the platform breakdown. Resolving through
+    the provider table collapses the aliases. Anything unrecognised is returned
+    unchanged rather than dropped — a platform we do not know about is still
+    the user's answer.
+    """
+    text = str(name).strip()
+    if not text:
+        return ""
+    provider_id = resolve_provider(text)
+    if provider_id is None:
+        return text
+    return config.PROVIDER_NAMES.get(provider_id, text)
+
+
 def normalise_media_type(media_type: str) -> str:
     """Map what a user or model might say to TMDB's 'movie' or 'tv'."""
     text = str(media_type).strip().lower()

@@ -168,7 +168,7 @@ def _movie_metadata(title: str) -> dict[str, Any]:
         "tmdb_id": details.get("tmdb_id", ""),
         "imdb_id": details.get("imdb_id", ""),
         "genre": ", ".join(details.get("genres") or []),
-        "platform": streaming[0] if streaming else "",
+        "platform": tmdb.canonical_platform(streaming[0]) if streaming else "",
         "tmdb_rating": details.get("rating", "") or "",
         "imdb_rating": ratings["imdb_rating"],
         "rt_rating": ratings["rt_rating"],
@@ -328,7 +328,9 @@ def _to_entry(row: dict[str, Any]) -> dict[str, Any]:
         "title": str(row.get("Movie_Title", "")),
         "tmdb_id": row.get("TMDB_ID", ""),
         "imdb_id": str(row.get("IMDb_ID", "")),
-        "platform": str(row.get("OTT_Platform", "")),
+        # Normalised on read too, so rows written before this still aggregate
+        # correctly in the platform breakdown.
+        "platform": tmdb.canonical_platform(row.get("OTT_Platform", "")),
         "genre": str(row.get("Genre", "")),
         "rating": rating,
         "review": str(row.get("User_Review", "")),
@@ -413,7 +415,7 @@ def add_to_journal(
         watch_date_value,
         resolved_title,
         meta["tmdb_id"],
-        str(platform).strip(),
+        tmdb.canonical_platform(platform),
         meta["genre"],
         rating_value if rating_value else "",
         str(review).strip(),
@@ -451,7 +453,7 @@ def add_to_journal(
             "title": resolved_title,
             "tmdb_id": meta["tmdb_id"],
             "imdb_id": meta["imdb_id"],
-            "platform": str(platform).strip(),
+            "platform": tmdb.canonical_platform(platform),
             "genre": meta["genre"],
             "rating": rating_value,
             "review": str(review).strip(),
@@ -516,7 +518,9 @@ def _to_watchlist_entry(row: dict[str, Any]) -> dict[str, Any]:
         "title": str(row.get("Movie_Title", "")),
         "tmdb_id": row.get("TMDB_ID", ""),
         "imdb_id": str(row.get("IMDb_ID", "")),
-        "platform": str(row.get("OTT_Platform", "")),
+        # Normalised on read too, so rows written before this still aggregate
+        # correctly in the platform breakdown.
+        "platform": tmdb.canonical_platform(row.get("OTT_Platform", "")),
         "genre": str(row.get("Genre", "")),
         "notes": str(row.get("Notes", "")),
         "tmdb_rating": row.get("TMDB_Rating", ""),
