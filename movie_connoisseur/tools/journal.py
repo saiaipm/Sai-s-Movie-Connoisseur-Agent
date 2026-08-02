@@ -83,19 +83,32 @@ def _open_worksheet(title: str, headers: tuple[str, ...]) -> gspread.Worksheet:
     except gspread.WorksheetNotFound:
         worksheet = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers))
 
-    # A sheet created with an older, shorter header set has a grid too narrow
-    # for the new one, and writing past the last column fails with "exceeds
-    # grid limits" rather than growing the sheet. Widen it first.
+    _reconcile_headers(worksheet, list(headers))
+    return worksheet
+
+
+def _reconcile_headers(worksheet, headers: list[str]) -> None:
+    """Ensure the header row starts with ``headers``, leaving extras alone.
+
+    Split out from _open_worksheet so it can be tested without Google.
+
+    Two rules, both learned the hard way:
+
+    - Only the columns this version owns are compared and rewritten. One
+      spreadsheet is shared by whatever version is running, so a newer build
+      may have appended columns; demanding an exact match would strip their
+      headers off and leave orphaned data underneath.
+    - The grid is widened first. Writing past the last column fails with
+      "exceeds grid limits" rather than growing the sheet.
+    """
     if worksheet.col_count < len(headers):
         worksheet.add_cols(len(headers) - worksheet.col_count)
 
-    if worksheet.row_values(1) != list(headers):
+    existing = worksheet.row_values(1)
+    if existing[: len(headers)] != headers:
         worksheet.update(
-            [list(headers)],
-            range_name=f"A1:{_column_letter(len(headers))}1",
+            [headers], range_name=f"A1:{_column_letter(len(headers))}1"
         )
-
-    return worksheet
 
 
 def _worksheet() -> gspread.Worksheet:
