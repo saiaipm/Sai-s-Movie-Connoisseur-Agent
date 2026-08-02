@@ -21,6 +21,8 @@ from movie_connoisseur import config
 from movie_connoisseur.tools.journal import (
     add_to_journal,
     add_to_watchlist,
+    rate_journal_entry,
+    suggest_from_watchlist,
     generate_shareable_summary,
     get_journal_history,
     get_watchlist,
@@ -237,6 +239,12 @@ _JOURNAL_LOGGING_INSTRUCTION = """\
 - The tool fills in the TMDB ID and genre itself — do not look them up first.
 - Confirm with the title and rating that came back in the result, since the
   title is normalised to its official form.
+
+**Rating something already logged** — call `rate_journal_entry(title, rating,
+review)`. Use this, not `add_to_journal`, when the title is already in the
+journal and the user is scoring it or changing their mind; logging it again
+would create a duplicate row. If it comes back with a `candidates` list the
+title was ambiguous, so ask which one they meant.
 """
 
 _WATCHLIST_INSTRUCTION = """\
@@ -297,6 +305,12 @@ _JOURNAL_EPILOGUE = """
 **Reading back** — call `get_journal_history(limit, filter_rating)`. Use
 filter_rating only when the user asks for their favourites or highly rated ones.
 
+**What to watch tonight** — call `suggest_from_watchlist(platform, media_type,
+limit)` when the user asks what they should watch, or what is worth watching
+from their list. Pass `platform` if they mention one service. The result is
+ordered by critical standing and also names `waiting_longest`, the entry that
+has sat unwatched the longest — mention it, it is often the better prompt.
+
 **Sharing** — call `generate_shareable_summary(log_ids, limit)` and return its
 `summary` field verbatim inside a code block so it can be copied cleanly. Do not
 rewrite or reformat that card.
@@ -306,10 +320,20 @@ critic_agent.
 """
 
 # Read-only tools, safe for any visitor.
-READ_TOOLS = [get_journal_history, get_watchlist, generate_shareable_summary]
+READ_TOOLS = [
+    get_journal_history,
+    get_watchlist,
+    generate_shareable_summary,
+    suggest_from_watchlist,
+]
 
 # Tools that mutate the owner's spreadsheet. Withheld unless writes are allowed.
-WRITE_TOOLS = [add_to_journal, add_to_watchlist, remove_from_watchlist]
+WRITE_TOOLS = [
+    add_to_journal,
+    add_to_watchlist,
+    remove_from_watchlist,
+    rate_journal_entry,
+]
 
 COORDINATOR_INSTRUCTION = """\
 You are the coordinator. Read the user's intent and transfer to the specialist

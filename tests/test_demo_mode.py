@@ -15,7 +15,12 @@ from movie_connoisseur.tools import journal
 
 
 # Every tool that mutates the owner's spreadsheet.
-WRITE_TOOLS = {"add_to_journal", "add_to_watchlist", "remove_from_watchlist"}
+WRITE_TOOLS = {
+    "add_to_journal",
+    "add_to_watchlist",
+    "remove_from_watchlist",
+    "rate_journal_entry",
+}
 
 
 @pytest.fixture
@@ -33,7 +38,12 @@ def _journal_agent(tree):
 def test_demo_journal_agent_has_no_write_tools(demo_tree):
     names = {t.__name__ for t in _journal_agent(demo_tree).tools}
     assert not (names & WRITE_TOOLS)
-    assert names == {"get_journal_history", "get_watchlist", "generate_shareable_summary"}
+    assert names == {
+        "get_journal_history",
+        "get_watchlist",
+        "generate_shareable_summary",
+        "suggest_from_watchlist",
+    }
 
 
 def test_no_agent_anywhere_can_write_in_demo_mode(demo_tree):

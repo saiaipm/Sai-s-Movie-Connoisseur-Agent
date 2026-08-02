@@ -469,6 +469,111 @@ def add_to_journal(
     }
 
 
+def _match_journal_rows(rows: list[dict[str, Any]], title: str) -> list[dict[str, Any]]:
+    """Journal rows matching a title, preferring exact over partial."""
+    wanted = title.strip().lower()
+    exact = [r for r in rows if str(r.get("Movie_Title", "")).strip().lower() == wanted]
+    if exact:
+        return exact
+    return [r for r in rows if wanted and wanted in str(r.get("Movie_Title", "")).lower()]
+
+
+def rate_journal_entry(
+    title: str,
+    rating: float = 0.0,
+    review: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Set or change your rating and review on something already in the journal.
+
+    Use this when the user rates a title they logged earlier, or changes their
+    mind about one. To log something new, use add_to_journal instead.
+
+    Args:
+        title: The title as it appears in the journal, e.g. "Inception".
+        rating: The user's star rating from 1.0 to 5.0. Use 0.0 to leave the
+            existing rating untouched and only change the review.
+        review: The user's note or mini-review. Leave empty to keep the
+            existing one.
+
+    Returns:
+        dict with ``status``. On success, the updated entry. If several entries
+        match the title, ``status`` is "error" with a ``candidates`` list —
+        ask which one they meant rather than guessing.
+    """
+    if not writes_allowed(tool_context):
+        return {"status": "error", "error_message": READ_ONLY_MESSAGE}
+
+    if not str(title).strip():
+        return {"status": "error", "error_message": "A title is required."}
+
+    try:
+        rating_value = float(rating or 0)
+    except (TypeError, ValueError):
+        return {"status": "error", "error_message": f"'{rating}' is not a valid rating."}
+
+    if rating_value and not 1.0 <= rating_value <= 5.0:
+        return {
+            "status": "error",
+            "error_message": f"Rating must be between 1.0 and 5.0, got {rating_value}.",
+        }
+
+    if not rating_value and not str(review).strip():
+        return {
+            "status": "error",
+            "error_message": "Give a rating, a review, or both — nothing to change otherwise.",
+        }
+
+    try:
+        rows = _read_rows()
+        matches = _match_journal_rows(rows, str(title))
+
+        if not matches:
+            return {
+                "status": "error",
+                "error_message": (
+                    f"'{title}' is not in the journal. Log it first with "
+                    "add_to_journal."
+                ),
+            }
+
+        if len(matches) > 1:
+            return {
+                "status": "error",
+                "error_message": (
+                    f"Several journal entries match '{title}'. Ask which one and "
+                    "call again with the exact title."
+                ),
+                "candidates": [_to_entry(r) for r in matches],
+            }
+
+        row = matches[0]
+        headers = list(config.JOURNAL_HEADERS)
+        updates = []
+        if rating_value:
+            cell = _column_letter(headers.index("User_Rating") + 1) + str(row["_row"])
+            updates.append({"range": cell, "values": [[rating_value]]})
+        if str(review).strip():
+            cell = _column_letter(headers.index("User_Review") + 1) + str(row["_row"])
+            updates.append({"range": cell, "values": [[str(review).strip()]]})
+
+        _worksheet().batch_update(updates)
+    except (JournalError, gspread.exceptions.APIError) as exc:
+        return {"status": "error", "error_message": str(exc)}
+
+    updated = _to_entry(row)
+    if rating_value:
+        updated["rating"] = rating_value
+    if str(review).strip():
+        updated["review"] = str(review).strip()
+
+    return {
+        "status": "success",
+        "message": f"Updated '{updated['title']}' in the journal.",
+        "entry": updated,
+    }
+
+
 def get_journal_history(limit: int = 10, filter_rating: float = 0.0) -> dict:
     """Read the user's logged movies from the Google Sheet, newest first.
 
@@ -658,6 +763,75 @@ def get_watchlist(limit: int = 20) -> dict:
         "status": "success",
         "entries": [_to_watchlist_entry(r) for r in ordered[:limit]],
         "total": len(rows),
+    }
+
+
+def suggest_from_watchlist(
+    platform: str = "", media_type: str = "", limit: int = 3
+) -> dict:
+    """Pick what to watch tonight from the watchlist, best-reviewed first.
+
+    Use this when the user asks what they should watch, what is worth watching
+    from their list, or what to put on now.
+
+    Args:
+        platform: Limit to one service, e.g. "Netflix". Leave empty for any.
+            Useful when the user only subscribes to some of them.
+        media_type: "movie" or "tv" to limit to films or series. Leave empty
+            for both.
+        limit: How many suggestions. Defaults to 3, capped at 10.
+
+    Returns:
+        dict with ``status`` and, on success, ``suggestions`` ordered by
+        critical standing, plus ``waiting_longest`` — the entry that has sat
+        unwatched the longest, which is often the more interesting answer.
+    """
+    limit = max(1, min(int(limit or 3), 10))
+
+    try:
+        rows = _read_watchlist_rows()
+    except (JournalError, gspread.exceptions.APIError) as exc:
+        return {"status": "error", "error_message": str(exc)}
+
+    entries = [_to_watchlist_entry(r) for r in rows]
+
+    wanted_platform = tmdb.canonical_platform(platform) if platform else ""
+    if wanted_platform:
+        entries = [e for e in entries if e["platform"] == wanted_platform]
+
+    wanted_kind = tmdb.normalise_media_type(media_type) if media_type else ""
+    if wanted_kind:
+        entries = [e for e in entries if (e["media_type"] or "movie") == wanted_kind]
+
+    if not entries:
+        scope = " on ".join(filter(None, ["Nothing on the watchlist", wanted_platform]))
+        return {
+            "status": "success",
+            "suggestions": [],
+            "message": f"{scope} matches that. Try dropping a filter.",
+        }
+
+    def standing(entry: dict) -> float:
+        """Rank by IMDb, falling back to TMDB, so unrated entries sink."""
+        for key in ("imdb_rating", "tmdb_rating"):
+            try:
+                value = float(entry.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            if value:
+                # TMDB and IMDb are both out of 10, so no rescaling needed.
+                return value
+        return 0.0
+
+    ranked = sorted(entries, key=standing, reverse=True)
+    oldest = min(entries, key=lambda e: str(e.get("added_date") or "9999"))
+
+    return {
+        "status": "success",
+        "suggestions": ranked[:limit],
+        "waiting_longest": oldest,
+        "total_considered": len(entries),
+        "platform": wanted_platform or "any platform",
     }
 
 

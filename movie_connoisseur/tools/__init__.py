@@ -3,6 +3,8 @@
 from movie_connoisseur.tools.journal import (
     add_to_journal,
     add_to_watchlist,
+    rate_journal_entry,
+    suggest_from_watchlist,
     generate_shareable_summary,
     get_journal_history,
     get_watchlist,
@@ -20,6 +22,8 @@ from movie_connoisseur.tools.tmdb import (
 __all__ = [
     "add_to_journal",
     "add_to_watchlist",
+    "rate_journal_entry",
+    "suggest_from_watchlist",
     "fetch_external_ratings",
     "fetch_credits",
     "fetch_title_details",

@@ -43,6 +43,8 @@ def test_coordinator_has_no_tools_of_its_own():
             agents.journal_agent,
             {
                 "add_to_journal",
+                "rate_journal_entry",
+                "suggest_from_watchlist",
                 "get_journal_history",
                 "generate_shareable_summary",
                 "add_to_watchlist",
