@@ -1,4 +1,4 @@
-# Movie Connoisseur
+# Sai's Streaming Companion
 
 A conversational multi-agent assistant for discovering movies on Indian OTT
 platforms, pulling rich film metadata, and keeping a personal movie journal in a

@@ -1,4 +1,4 @@
-"""Movie Connoisseur — Streamlit frontend.
+"""Sai's Streaming Companion — Streamlit frontend.
 
     uv run streamlit run app.py
 
@@ -9,6 +9,7 @@ rerun-on-every-interaction model.
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from movie_connoisseur import config
@@ -22,7 +23,7 @@ from movie_connoisseur.chat import MovieChat
 from movie_connoisseur.tools import journal, tmdb
 
 st.set_page_config(
-    page_title="Movie Connoisseur",
+    page_title="Sai's Streaming Companion",
     page_icon="🍿",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -184,10 +185,16 @@ def render_account(write_enabled: bool, email: str, is_owner: bool) -> None:
         if st.button("Sign out", use_container_width=True):
             st.logout()
     else:
-        st.info(
-            "**Read-only.** Ask anything about films and browse the journal. "
-            "The owner can sign in for full access."
-        )
+        # Nobody signed in. Locally WRITE_ENABLED can still be true, so do not
+        # claim read-only without checking — the message would contradict what
+        # the app actually allows.
+        if write_enabled:
+            st.success("Full access (enabled for this deployment)")
+        else:
+            st.info(
+                "**Read-only.** Ask anything about films and browse the journal. "
+                "The owner can sign in for full access."
+            )
         if st.button("Sign in with Google", use_container_width=True):
             st.login("google")
 
@@ -227,7 +234,7 @@ def render_sidebar(
     write_enabled: bool, email: str, is_owner: bool, provider: str
 ) -> None:
     with st.sidebar:
-        st.title("🍿 Movie Connoisseur")
+        st.title("🍿 Sai's Streaming Companion")
         st.caption("Discover, research and journal movies on Indian OTT.")
 
         render_account(write_enabled, email, is_owner)
@@ -377,12 +384,163 @@ def render_chat_tab(write_enabled: bool, provider: str) -> None:
         st.rerun()
 
 
+# --- Shared table helpers --------------------------------------------------
+
+
+def _number(value) -> float | None:
+    """Blank cells to None so a rating column stays numeric.
+
+    A mix of numbers and empty strings makes the column object-dtype, and
+    NumberColumn then refuses to format it.
+    """
+    if value in ("", None):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _numeric_frame(rows: list[dict], numeric: list[str]) -> pd.DataFrame:
+    """Build the table with genuinely numeric rating columns.
+
+    Coercing keeps the columns sortable and lets NumberColumn format them; a
+    column of mixed numbers and empty strings would be object dtype, which
+    NumberColumn refuses.
+
+    Missing values still show as a grey "None" — that is Streamlit's own
+    placeholder for a null and there is no column_config option to change it.
+    Rendering blanks instead would mean formatting these as strings, which
+    would cost the sorting the columns exist for.
+    """
+    frame = pd.DataFrame(rows)
+    for column in numeric:
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
+NUMERIC_COLUMNS = ["Yours", "TMDB", "IMDb", "RT", "MC"]
+
+
+# Shared by both tables: same four sources, same scales, same formatting.
+RATING_COLUMNS = {
+    "TMDB": st.column_config.NumberColumn(
+        "TMDB", format="%.1f", help="TMDB community score, out of 10", width="small"
+    ),
+    "IMDb": st.column_config.NumberColumn(
+        "IMDb", format="%.1f", help="IMDb user score, out of 10", width="small"
+    ),
+    "RT": st.column_config.NumberColumn(
+        "RT", format="%d%%", help="Rotten Tomatoes, out of 100", width="small"
+    ),
+    "MC": st.column_config.NumberColumn(
+        "MC",
+        format="%d",
+        help="Metacritic, out of 100. Absent for most Indian films.",
+        width="small",
+    ),
+    "Synopsis": st.column_config.TextColumn(
+        "Synopsis", help="Click a cell to read the full text", width="medium"
+    ),
+}
+
+
+def _rating_cells(entry: dict) -> dict:
+    return {
+        "TMDB": _number(entry.get("tmdb_rating")),
+        "IMDb": _number(entry.get("imdb_rating")),
+        "RT": _number(entry.get("rt_rating")),
+        "MC": _number(entry.get("metacritic")),
+    }
+
+
+# --- Journal statistics ----------------------------------------------------
+
+# Below this many entries a "top genre" is noise, not a finding. Better to say
+# so than to draw a one-bar chart and imply a pattern that is not there.
+MIN_FOR_BREAKDOWN = 5
+MIN_FOR_CADENCE = 2  # distinct months
+
+
+def render_journal_stats(entries: list[dict], total: int) -> None:
+    stats = journal.summarise_entries(entries)
+
+    series = stats["media_types"].get("tv", 0)
+    films = total - series
+
+    top_genre = stats["genres"][0] if stats["genres"] else None
+    top_platform = stats["platforms"][0] if stats["platforms"] else None
+    taste = stats["taste"]
+
+    a, b, c, d = st.columns(4)
+    a.metric(
+        "Titles logged",
+        total,
+        help=f"{films} film(s), {series} series" if series else None,
+    )
+    b.metric(
+        "Top genre",
+        top_genre[0] if top_genre else "—",
+        help=f"{top_genre[1]} of {total} titles" if top_genre else None,
+    )
+    c.metric(
+        "Most watched on",
+        top_platform[0] if top_platform else "—",
+        help=f"{top_platform[1]} of {total} titles" if top_platform else None,
+    )
+    if taste:
+        d.metric(
+            "You vs critics",
+            f"{taste['yours']}/10",
+            delta=f"{taste['delta']:+.1f} vs IMDb",
+            help=(
+                f"Your average rating doubled to a /10 scale, against IMDb for "
+                f"the same {taste['sample']} title(s) you rated."
+            ),
+        )
+    else:
+        d.metric("You vs critics", "—", help="Rate some titles to compare.")
+
+    if total < MIN_FOR_BREAKDOWN:
+        st.caption(
+            f"Genre and platform breakdowns appear once you have logged "
+            f"{MIN_FOR_BREAKDOWN} titles — below that they say more about "
+            "chance than taste."
+        )
+        return
+
+    left, right = st.columns(2)
+    with left:
+        st.caption("**Genres** — a title counts towards each of its genres")
+        st.bar_chart(
+            pd.DataFrame(stats["genres"][:8], columns=["Genre", "Titles"]).set_index(
+                "Genre"
+            ),
+            horizontal=True,
+        )
+    with right:
+        st.caption("**Platforms**")
+        st.bar_chart(
+            pd.DataFrame(stats["platforms"], columns=["Platform", "Titles"]).set_index(
+                "Platform"
+            ),
+            horizontal=True,
+        )
+
+    if len(stats["months"]) >= MIN_FOR_CADENCE:
+        st.caption("**Titles per month**")
+        st.bar_chart(
+            pd.DataFrame(stats["months"], columns=["Month", "Titles"]).set_index("Month")
+        )
+
+
 # --- Journal tab -----------------------------------------------------------
 
 
 def render_journal_tab(write_enabled: bool) -> None:
     left, right = st.columns([3, 1])
-    left.subheader("Your movie journal" if write_enabled else "Movie journal")
+    left.subheader("Your journal" if write_enabled else "Journal")
     if right.button("Refresh", use_container_width=True):
         journal.reset_connection()
         st.rerun()
@@ -406,43 +564,51 @@ def render_journal_tab(write_enabled: bool) -> None:
     entries = result["entries"]
     if not entries:
         st.info(
-            "Nothing logged yet. Tell the agent what you watched and it'll appear here."
+            "Nothing logged yet. Tell the agent what you watched and it will appear here."
             if write_enabled
             else "Nothing logged yet."
         )
         return
 
-    rated = [e["rating"] for e in entries if e["rating"]]
-    platforms = [e["platform"] for e in entries if e["platform"]]
-
-    a, b, c = st.columns(3)
-    a.metric("Movies logged", result["total_logged"])
-    b.metric("Average rating", f"{sum(rated) / len(rated):.1f}/5" if rated else "—")
-    c.metric(
-        "Most watched on",
-        max(set(platforms), key=platforms.count) if platforms else "—",
-    )
+    render_journal_stats(entries, result["total_logged"])
 
     st.dataframe(
-        [
-            {
-                "Date": e["watch_date"],
-                "Title": e["title"],
-                "Platform": e["platform"],
-                "Genre": e["genre"],
-                "Rating": e["rating"] or None,
-                "Review": e["review"],
-                "Shared": e["shared"],
-            }
-            for e in entries
-        ],
+        _numeric_frame(
+            [
+                {
+                    "Date": e["watch_date"],
+                    "Title": e["title"],
+                    "Platform": e["platform"],
+                    "Genre": e["genre"],
+                    "Yours": e["rating"] or None,
+                    **_rating_cells(e),
+                    "Review": e["review"],
+                    "Synopsis": e["synopsis"],
+                    "Shared": e["shared"],
+                }
+                for e in entries
+            ],
+            NUMERIC_COLUMNS,
+        ),
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Rating": st.column_config.NumberColumn(format="%.1f ⭐", min_value=0, max_value=5),
-            "Shared": st.column_config.CheckboxColumn(),
-            "Review": st.column_config.TextColumn(width="large"),
+            "Yours": st.column_config.NumberColumn(
+                "Yours",
+                format="%.1f ⭐",
+                min_value=0,
+                max_value=5,
+                help="Your own rating, out of 5",
+                width="small",
+            ),
+            **RATING_COLUMNS,
+            "Review": st.column_config.TextColumn(width="medium"),
+            "Shared": st.column_config.CheckboxColumn(width="small"),
         },
+    )
+    st.caption(
+        "Your rating is out of 5; TMDB and IMDb out of 10; RT and Metacritic "
+        "out of 100. \"None\" means that source has no score for the film."
     )
 
 
@@ -478,21 +644,41 @@ def render_watchlist_tab(write_enabled: bool) -> None:
         )
         return
 
-    st.metric("Films saved", result["total"])
+    rated = [_number(e.get("imdb_rating")) for e in entries]
+    rated = [r for r in rated if r is not None]
+
+    a, b = st.columns(2)
+    a.metric("Films saved", result["total"])
+    b.metric(
+        "Average IMDb", f"{sum(rated) / len(rated):.1f}/10" if rated else "—"
+    )
+
     st.dataframe(
-        [
-            {
-                "Added": e["added_date"],
-                "Title": e["title"],
-                "Platform": e["platform"],
-                "Genre": e["genre"],
-                "Notes": e["notes"],
-            }
-            for e in entries
-        ],
+        _numeric_frame(
+            [
+                {
+                    "Added": e["added_date"],
+                    "Title": e["title"],
+                    "Platform": e["platform"],
+                    "Genre": e["genre"],
+                    **_rating_cells(e),
+                    "Notes": e["notes"],
+                    "Synopsis": e["synopsis"],
+                }
+                for e in entries
+            ],
+            NUMERIC_COLUMNS,
+        ),
         use_container_width=True,
         hide_index=True,
-        column_config={"Notes": st.column_config.TextColumn(width="large")},
+        column_config={
+            **RATING_COLUMNS,
+            "Notes": st.column_config.TextColumn(width="medium"),
+        },
+    )
+    st.caption(
+        "TMDB and IMDb are out of 10; RT and Metacritic out of 100. \"None\" means "
+        "that source has no score for the film."
     )
 
 
@@ -506,7 +692,7 @@ PROVIDER = resolve_provider(WRITE_ENABLED)
 render_sidebar(WRITE_ENABLED, USER_EMAIL, IS_OWNER, PROVIDER)
 
 if missing_credentials() or MODEL_ERROR:
-    st.title("🍿 Movie Connoisseur")
+    st.title("🍿 Sai's Streaming Companion")
     st.warning(
         "This app is not fully configured yet — see the sidebar for what is "
         "missing, add it to the app's secrets, and reload."

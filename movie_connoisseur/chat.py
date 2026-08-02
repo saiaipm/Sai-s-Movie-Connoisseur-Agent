@@ -91,7 +91,7 @@ def _describe_model_error(exc: Exception) -> tuple[str, int]:
 
 
 class MovieChat:
-    """One conversation with the Movie Connoisseur agent tree."""
+    """One conversation with Sai's Streaming Companion."""
 
     def __init__(
         self,

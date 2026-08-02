@@ -38,6 +38,11 @@ def get_secret(name: str, default: str = "") -> str:
 # --- Credentials ----------------------------------------------------------
 
 TMDB_API_KEY = get_secret("TMDB_API_KEY")
+
+# OMDb supplies the IMDb, Rotten Tomatoes and Metacritic ratings that TMDB does
+# not carry. Optional: without it those columns simply stay empty.
+OMDB_API_KEY = get_secret("OMDB_API_KEY")
+OMDB_BASE_URL = get_secret("OMDB_BASE_URL", "https://www.omdbapi.com/")
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY") or get_secret("GOOGLE_API_KEY")
 SPREADSHEET_KEY = get_secret("SPREADSHEET_KEY")
 
@@ -320,6 +325,72 @@ MOVIE_GENRES: dict[str, int] = {
     "western": 37,
 }
 
+# Television uses a different genre list from film. Verified against
+# /genre/tv/list: no name is shared with a different ID, so the two tables can
+# never disagree — but several film genres have no television equivalent at all.
+#
+# TMDB collapses Action and Adventure into one television genre, and Science
+# Fiction and Fantasy into another, so those aliases point at the combined ID.
+TV_GENRES: dict[str, int] = {
+    "action & adventure": 10759,
+    "action and adventure": 10759,
+    "action": 10759,
+    "adventure": 10759,
+    "animation": 16,
+    "anime": 16,
+    "comedy": 35,
+    "sitcom": 35,
+    "crime": 80,
+    "documentary": 99,
+    "docuseries": 99,
+    "drama": 18,
+    "family": 10751,
+    "kids": 10762,
+    "children": 10762,
+    "mystery": 9648,
+    "news": 10763,
+    "reality": 10764,
+    "reality tv": 10764,
+    "sci-fi & fantasy": 10765,
+    "sci-fi and fantasy": 10765,
+    "sci-fi": 10765,
+    "scifi": 10765,
+    "science fiction": 10765,
+    "fantasy": 10765,
+    "soap": 10766,
+    "talk": 10767,
+    "talk show": 10767,
+    "war & politics": 10768,
+    "war and politics": 10768,
+    "war": 10768,
+    "politics": 10768,
+    "western": 37,
+}
+
+TV_GENRE_NAMES: dict[int, str] = {
+    10759: "Action & Adventure",
+    16: "Animation",
+    35: "Comedy",
+    80: "Crime",
+    99: "Documentary",
+    18: "Drama",
+    10751: "Family",
+    10762: "Kids",
+    9648: "Mystery",
+    10763: "News",
+    10764: "Reality",
+    10765: "Sci-Fi & Fantasy",
+    10766: "Soap",
+    10767: "Talk",
+    10768: "War & Politics",
+    37: "Western",
+}
+
+# Film genres with no television counterpart on TMDB. Asking for a "thriller
+# series" has to be answered honestly rather than silently mapped to something
+# adjacent.
+FILM_ONLY_GENRES = {"thriller", "horror", "romance", "history", "music", "musical"}
+
 GENRE_NAMES: dict[int, str] = {
     28: "Action",
     12: "Adventure",
@@ -375,6 +446,21 @@ JOURNAL_HEADERS: list[str] = [
     "User_Rating",
     "User_Review",
     "Shared_Status",
+    # Added in v1.2. Ratings keep their native scales: TMDB and IMDb are out of
+    # 10, Rotten Tomatoes and Metacritic out of 100. Any of them can be blank —
+    # measured coverage on Indian films is IMDb 100%, RT 83%, Metacritic 33%.
+    "IMDb_ID",
+    "TMDB_Rating",
+    "IMDb_Rating",
+    "RT_Rating",
+    "Metacritic",
+    "Synopsis",
+    # Added in v1.3 for television. Appended rather than slotted next to
+    # Movie_Title on purpose: header reconciliation only rewrites row 1, so
+    # inserting a column mid-sheet would relabel every column to its right
+    # without moving the data underneath.
+    "Media_Type",
+    "Seasons",
 ]
 
 # "Want to watch" lives in its own worksheet rather than as a flag on the
@@ -390,6 +476,16 @@ WATCHLIST_HEADERS: list[str] = [
     "OTT_Platform",
     "Genre",
     "Notes",
+    # Same six as the journal, minus User_Rating — you have not watched it yet,
+    # so the critics' scores are exactly what helps you choose.
+    "IMDb_ID",
+    "TMDB_Rating",
+    "IMDb_Rating",
+    "RT_Rating",
+    "Metacritic",
+    "Synopsis",
+    "Media_Type",
+    "Seasons",
 ]
 
 GOOGLE_API_SCOPES = [

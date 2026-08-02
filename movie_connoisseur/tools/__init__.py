@@ -8,24 +8,26 @@ from movie_connoisseur.tools.journal import (
     get_watchlist,
     remove_from_watchlist,
 )
+from movie_connoisseur.tools.omdb import fetch_external_ratings
 from movie_connoisseur.tools.tmdb import (
-    fetch_movie_credits,
-    fetch_movie_details,
-    fetch_ott_movies,
+    fetch_credits,
+    fetch_title_details,
+    fetch_ott_titles,
     list_ott_providers,
-    search_movies,
+    search_titles,
 )
 
 __all__ = [
     "add_to_journal",
     "add_to_watchlist",
-    "fetch_movie_credits",
-    "fetch_movie_details",
-    "fetch_ott_movies",
+    "fetch_external_ratings",
+    "fetch_credits",
+    "fetch_title_details",
+    "fetch_ott_titles",
     "generate_shareable_summary",
     "get_journal_history",
     "get_watchlist",
     "list_ott_providers",
     "remove_from_watchlist",
-    "search_movies",
+    "search_titles",
 ]

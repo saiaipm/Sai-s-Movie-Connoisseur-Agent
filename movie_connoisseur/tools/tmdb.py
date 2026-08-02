@@ -103,15 +103,48 @@ def resolve_provider(provider: str) -> int | None:
     return None
 
 
-@functools.lru_cache(maxsize=1)
-def _live_genre_map() -> dict[str, int]:
+def canonical_platform(name: str) -> str:
+    """Return the one agreed spelling for an OTT platform.
+
+    "Prime Video" and "Amazon Prime Video" are the same service, but stored
+    verbatim they become two rows in the platform breakdown. Resolving through
+    the provider table collapses the aliases. Anything unrecognised is returned
+    unchanged rather than dropped — a platform we do not know about is still
+    the user's answer.
+    """
+    text = str(name).strip()
+    if not text:
+        return ""
+    provider_id = resolve_provider(text)
+    if provider_id is None:
+        return text
+    return config.PROVIDER_NAMES.get(provider_id, text)
+
+
+def normalise_media_type(media_type: str) -> str:
+    """Map what a user or model might say to TMDB's 'movie' or 'tv'."""
+    text = str(media_type).strip().lower()
+    if text in {"tv", "series", "show", "tv show", "television", "serial"}:
+        return "tv"
+    if text in {"movie", "film", "movies", "films"}:
+        return "movie"
+    return ""
+
+
+@functools.lru_cache(maxsize=2)
+def _live_genre_map(media_type: str = "movie") -> dict[str, int]:
     """Fetch the current genre list from TMDB, cached for the process lifetime."""
-    payload = _get("/genre/movie/list")
+    payload = _get(f"/genre/{media_type}/list")
     return {g["name"].strip().lower(): int(g["id"]) for g in payload.get("genres", [])}
 
 
-def resolve_genre(genre: str) -> int | None:
+def resolve_genre(genre: str, media_type: str = "movie") -> int | None:
     """Map a genre name or numeric ID to a TMDB genre ID.
+
+    Film and television have separate genre lists. Television collapses Action
+    and Adventure into one genre, and Science Fiction and Fantasy into another,
+    so the same word resolves to a different ID depending on media type — and
+    Thriller, Horror and Romance do not exist for television at all.
 
     Accepts the PRD's ``genre_id`` form as well as the natural-language
     ``genre="Thriller"`` form used in the sample dialogue.
@@ -121,12 +154,20 @@ def resolve_genre(genre: str) -> int | None:
         return None
     if text.isdigit():
         return int(text)
-    if text in config.MOVIE_GENRES:
-        return config.MOVIE_GENRES[text]
+
+    table = config.TV_GENRES if media_type == "tv" else config.MOVIE_GENRES
+    if text in table:
+        return table[text]
+
     try:
-        return _live_genre_map().get(text)
+        return _live_genre_map(media_type).get(text)
     except TMDBError:
         return None
+
+
+def genre_name(genre_id: int, media_type: str = "movie") -> str:
+    names = config.TV_GENRE_NAMES if media_type == "tv" else config.GENRE_NAMES
+    return names.get(genre_id, str(genre_id))
 
 
 def resolve_language(language: str) -> str:
@@ -155,57 +196,78 @@ def _poster_url(path: str | None) -> str:
     return f"{config.TMDB_IMAGE_BASE_URL}{path}" if path else ""
 
 
-def _summarise(movie: dict) -> dict:
-    """Condense a TMDB list entry into the fields the agent presents."""
+def _summarise(item: dict, media_type: str = "movie") -> dict:
+    """Condense a TMDB list entry into the fields the agent presents.
+
+    Film and television disagree on field names — ``title`` versus ``name``,
+    ``release_date`` versus ``first_air_date`` — so both are normalised here
+    into one shape rather than leaking the difference to every caller.
+    """
+    media_type = item.get("media_type") or media_type
+    date = item.get("release_date") or item.get("first_air_date") or ""
+
     return {
-        "tmdb_id": movie.get("id"),
-        "title": movie.get("title") or movie.get("original_title", ""),
-        "release_date": movie.get("release_date", ""),
-        "release_year": (movie.get("release_date") or "")[:4],
-        "rating": round(float(movie.get("vote_average") or 0), 1),
-        "vote_count": movie.get("vote_count", 0),
-        "language": movie.get("original_language", ""),
+        "tmdb_id": item.get("id"),
+        "media_type": media_type,
+        "title": (
+            item.get("title")
+            or item.get("name")
+            or item.get("original_title")
+            or item.get("original_name", "")
+        ),
+        "release_date": date,
+        "release_year": date[:4],
+        "rating": round(float(item.get("vote_average") or 0), 1),
+        "vote_count": item.get("vote_count", 0),
+        "language": item.get("original_language", ""),
         "genres": [
-            config.GENRE_NAMES.get(gid, str(gid)) for gid in movie.get("genre_ids", [])
+            genre_name(gid, media_type) for gid in item.get("genre_ids", [])
         ],
-        "overview": movie.get("overview", ""),
-        "poster_url": _poster_url(movie.get("poster_path")),
+        "overview": item.get("overview", ""),
+        "poster_url": _poster_url(item.get("poster_path")),
     }
 
 
 # --- Discovery Agent tools -------------------------------------------------
 
 
-def fetch_ott_movies(
+def fetch_ott_titles(
     provider: str = "",
     genre: str = "",
+    media_type: str = "movie",
     release_year: int = 0,
     language: str = "",
     min_rating: float = 0.0,
     limit: int = 5,
 ) -> dict:
-    """Find movies streaming on an Indian OTT platform, filtered by genre, year or language.
+    """Find movies or TV series streaming on an Indian OTT platform, filtered by genre, year or language.
 
     Use this when the user asks what is available to watch on a platform, or
     wants recommendations narrowed by genre, release year or language.
 
     Args:
         provider: OTT platform name or TMDB provider ID, e.g. "Netflix",
-            "Disney+ Hotstar", "Zee5" or "8". Leave empty to search all
-            platforms available in India.
+            "JioHotstar", "Zee5" or "8". Leave empty to search all platforms
+            available in India.
         genre: Genre name or TMDB genre ID, e.g. "Thriller", "Comedy" or "53".
-            Leave empty for no genre filter.
-        release_year: Four-digit release year, e.g. 2024. Use 0 for any year.
+            Leave empty for no genre filter. Note that television has its own
+            genre list: Thriller, Horror and Romance exist only for films.
+        media_type: "movie" (default) or "tv" for series. Set it to "tv"
+            whenever the user asks about shows, series or television.
+        release_year: Four-digit release or first-air year, e.g. 2024. Use 0
+            for any year.
         language: Original language name or ISO code, e.g. "Tamil" or "ta".
             Leave empty for any language.
         min_rating: Minimum TMDB community rating out of 10, e.g. 7.0. Use 0.0
             for no minimum.
-        limit: How many movies to return. Defaults to 5, capped at 20.
+        limit: How many titles to return. Defaults to 5, capped at 20.
 
     Returns:
-        dict with ``status`` and, on success, a ``movies`` list where each entry
-        carries the title, TMDB ID, release year, rating, genres and overview.
+        dict with ``status`` and, on success, a ``results`` list where each
+        entry carries the title, TMDB ID, media type, release year, rating,
+        genres and overview.
     """
+    kind = normalise_media_type(media_type) or "movie"
     provider_id = resolve_provider(provider) if provider else None
     if provider and provider_id is None:
         return {
@@ -216,15 +278,19 @@ def fetch_ott_movies(
             ),
         }
 
-    genre_id = resolve_genre(genre) if genre else None
+    genre_id = resolve_genre(genre, kind) if genre else None
     if genre and genre_id is None:
-        return {
-            "status": "error",
-            "error_message": (
-                f"Unknown genre '{genre}'. Supported genres: "
-                + ", ".join(sorted(config.GENRE_NAMES.values()))
-            ),
-        }
+        names = config.TV_GENRE_NAMES if kind == "tv" else config.GENRE_NAMES
+        # Be specific when the genre exists but only for films — silently
+        # substituting something adjacent would misrepresent the results.
+        if kind == "tv" and str(genre).strip().lower() in config.FILM_ONLY_GENRES:
+            hint = (
+                f"TMDB has no '{genre}' genre for television — it exists only "
+                "for films. Closest television genres: "
+            )
+        else:
+            hint = f"Unknown genre '{genre}' for {kind}. Supported: "
+        return {"status": "error", "error_message": hint + ", ".join(sorted(names.values()))}
 
     language_code = resolve_language(language) if language else ""
     if language and not language_code:
@@ -238,82 +304,109 @@ def fetch_ott_movies(
 
     limit = max(1, min(int(limit or 5), 20))
 
+    # The year parameter is named differently per catalogue.
+    year_param = (
+        {"first_air_date_year": release_year or None}
+        if kind == "tv"
+        else {"primary_release_year": release_year or None}
+    )
+
     try:
         payload = _get(
-            "/discover/movie",
+            f"/discover/{kind}",
             with_watch_providers=provider_id,
             watch_region=config.WATCH_REGION,
             with_genres=genre_id,
-            primary_release_year=release_year or None,
             with_original_language=language_code or None,
+            **year_param,
             **{"vote_average.gte": min_rating or None},
             # Require a minimum vote count so obscure titles with a lone 10/10
-            # do not crowd out genuinely popular results.
-            **{"vote_count.gte": 50},
+            # do not crowd out genuinely popular results. Television has a
+            # smaller voting population, so the bar is lower.
+            **{"vote_count.gte": 10 if kind == "tv" else 50},
             sort_by="popularity.desc",
             include_adult="false",
         )
     except TMDBError as exc:
         return {"status": "error", "error_message": str(exc)}
 
-    movies = [_summarise(m) for m in payload.get("results", [])[:limit]]
+    results = [_summarise(m, kind) for m in payload.get("results", [])[:limit]]
 
-    if not movies:
+    if not results:
+        noun = "series" if kind == "tv" else "movies"
         return {
             "status": "success",
-            "movies": [],
+            "media_type": kind,
+            "results": [],
             "total_results": 0,
             "message": (
-                "No movies matched those filters on that platform in India. "
+                f"No {noun} matched those filters on that platform in India. "
                 "Try relaxing the year, genre or rating filter."
             ),
         }
 
     return {
         "status": "success",
-        "provider": config.PROVIDER_NAMES.get(provider_id, provider) if provider_id else "All platforms (India)",
-        "movies": movies,
-        "total_results": payload.get("total_results", len(movies)),
+        "media_type": kind,
+        "provider": config.PROVIDER_NAMES.get(provider_id, provider)
+        if provider_id
+        else "All platforms (India)",
+        "results": results,
+        "total_results": payload.get("total_results", len(results)),
     }
 
 
-def search_movies(query: str, limit: int = 5) -> dict:
-    """Search TMDB for movies by title.
+def search_titles(query: str, media_type: str = "", limit: int = 5) -> dict:
+    """Search TMDB for a movie or TV series by title.
 
     Use this to resolve a title the user mentioned into a TMDB ID before
-    fetching details or logging it to the journal.
+    fetching details or saving it. Searches both films and television unless
+    media_type narrows it.
 
     Args:
-        query: The movie title to search for, e.g. "Stree 2".
+        query: The title to search for, e.g. "Stree 2" or "Ted Lasso".
+        media_type: "movie" or "tv" to restrict the search. Leave empty to
+            search both, which is usually what you want.
         limit: How many matches to return. Defaults to 5, capped at 20.
 
     Returns:
-        dict with ``status`` and, on success, a ``movies`` list ordered by
-        popularity, each with a ``tmdb_id`` usable by the other tools.
+        dict with ``status`` and, on success, a ``results`` list ordered by
+        popularity. Each entry carries a ``tmdb_id`` and a ``media_type`` of
+        "movie" or "tv", both of which the other tools need.
     """
     if not str(query).strip():
-        return {"status": "error", "error_message": "A movie title is required."}
+        return {"status": "error", "error_message": "A title is required."}
 
     limit = max(1, min(int(limit or 5), 20))
+    wanted = normalise_media_type(media_type)
+
+    # /search/multi returns films, television and people in one call, tagged
+    # with media_type — so "Ted Lasso" resolves without the caller having to
+    # know in advance that it is a series.
+    endpoint = f"/search/{wanted}" if wanted else "/search/multi"
 
     try:
-        payload = _get("/search/movie", query=query, include_adult="false")
+        payload = _get(endpoint, query=query, include_adult="false")
     except TMDBError as exc:
         return {"status": "error", "error_message": str(exc)}
 
-    results = payload.get("results", [])
+    results = []
+    for item in payload.get("results", []):
+        kind = item.get("media_type") or wanted or "movie"
+        if kind not in {"movie", "tv"}:
+            continue  # /search/multi also returns people
+        results.append(_summarise(item, kind))
+        if len(results) >= limit:
+            break
+
     if not results:
         return {
             "status": "success",
-            "movies": [],
-            "message": f"No movie on TMDB matched '{query}'.",
+            "results": [],
+            "message": f"Nothing on TMDB matched '{query}'.",
         }
 
-    return {
-        "status": "success",
-        "query": query,
-        "movies": [_summarise(m) for m in results[:limit]],
-    }
+    return {"status": "success", "query": query, "results": results}
 
 
 # --- Critic & Detail Agent tools -------------------------------------------
@@ -347,97 +440,146 @@ def _india_streaming(providers: dict) -> list[str]:
     return names
 
 
-def fetch_movie_details(title_or_id: str) -> dict:
-    """Get full details for one movie: plot, director, cast, runtime, rating and where to stream it in India.
+def _tv_certification(ratings: dict) -> str:
+    """Indian age rating for a series, from the appended content_ratings block."""
+    for entry in ratings.get("results", []):
+        if entry.get("iso_3166_1") == config.WATCH_REGION and entry.get("rating"):
+            return entry["rating"]
+    for entry in ratings.get("results", []):
+        if entry.get("iso_3166_1") == "US" and entry.get("rating"):
+            return f"{entry['rating']} (US)"
+    return "Not rated"
 
-    Accepts either a TMDB ID or a title — a title is resolved to the most
-    popular match automatically.
+
+def fetch_title_details(title_or_id: str, media_type: str = "") -> dict:
+    """Get full details for one movie or TV series: plot, cast, director, runtime, rating and where to stream it in India.
+
+    Accepts a title or a TMDB ID, and handles both films and television. A
+    title is resolved to the most popular match automatically, so "Ted Lasso"
+    works without saying it is a series.
 
     Args:
-        title_or_id: A movie title such as "Maharaja", or a TMDB ID such as
-            "109123".
+        title_or_id: A title such as "Maharaja" or "Ted Lasso", or a TMDB ID
+            such as "109123".
+        media_type: "movie" or "tv". Only needed to disambiguate when a film
+            and a series share a title, or when passing a numeric ID — an ID
+            alone is meaningless without knowing which catalogue it belongs to.
 
     Returns:
-        dict with ``status`` and, on success, the movie's plot, director,
+        dict with ``status`` and, on success, the plot, creator or director,
         top-billed cast, formatted runtime, age certification, community
-        rating and Indian streaming platforms.
+        rating and Indian streaming platforms. For a series it also carries
+        ``seasons`` and ``episodes``.
     """
     text = str(title_or_id).strip()
     if not text:
-        return {"status": "error", "error_message": "A movie title or TMDB ID is required."}
+        return {"status": "error", "error_message": "A title or TMDB ID is required."}
+
+    kind = normalise_media_type(media_type)
 
     if text.isdigit():
-        movie_id = int(text)
+        # A bare ID says nothing about which catalogue it came from, so assume
+        # film unless told otherwise.
+        tmdb_id = int(text)
+        kind = kind or "movie"
     else:
-        found = search_movies(text, limit=1)
+        found = search_titles(text, media_type=kind, limit=1)
         if found["status"] == "error":
             return found
-        if not found["movies"]:
+        if not found.get("results"):
             return {
                 "status": "error",
-                "error_message": f"No movie on TMDB matched '{text}'.",
+                "error_message": f"Nothing on TMDB matched '{text}'.",
             }
-        movie_id = found["movies"][0]["tmdb_id"]
+        tmdb_id = found["results"][0]["tmdb_id"]
+        kind = found["results"][0]["media_type"]
+
+    extras = (
+        "credits,content_ratings,watch/providers,external_ids"
+        if kind == "tv"
+        else "credits,release_dates,watch/providers"
+    )
 
     try:
-        movie = _get(
-            f"/movie/{movie_id}",
-            append_to_response="credits,release_dates,watch/providers",
-        )
+        item = _get(f"/{kind}/{tmdb_id}", append_to_response=extras)
     except TMDBError as exc:
         return {"status": "error", "error_message": str(exc)}
 
-    credits = movie.get("credits", {})
-    directors = [
-        person["name"]
-        for person in credits.get("crew", [])
-        if person.get("job") == "Director"
-    ]
+    credits = item.get("credits", {})
     cast = [person["name"] for person in credits.get("cast", [])[:5]]
+
+    if kind == "tv":
+        # Series have creators rather than a director, and a per-episode
+        # runtime rather than one total.
+        makers = [c["name"] for c in item.get("created_by", [])] or [
+            p["name"] for p in credits.get("crew", []) if p.get("job") == "Director"
+        ]
+        runtimes = item.get("episode_run_time") or []
+        minutes = runtimes[0] if runtimes else 0
+        # imdb_id lives under external_ids for television, not at the top level.
+        imdb_id = (item.get("external_ids") or {}).get("imdb_id") or ""
+        certification = _tv_certification(item.get("content_ratings", {}))
+    else:
+        makers = [
+            p["name"] for p in credits.get("crew", []) if p.get("job") == "Director"
+        ]
+        minutes = item.get("runtime") or 0
+        imdb_id = item.get("imdb_id") or ""
+        certification = _certification(item.get("release_dates", {}))
+
+    summary = _summarise(item, kind)
 
     return {
         "status": "success",
-        "tmdb_id": movie.get("id", movie_id),
-        "title": movie.get("title", ""),
-        "original_title": movie.get("original_title", ""),
-        "tagline": movie.get("tagline", ""),
-        "overview": movie.get("overview", ""),
-        "release_date": movie.get("release_date", ""),
-        "runtime_minutes": movie.get("runtime") or 0,
-        "runtime": format_runtime(movie.get("runtime") or 0),
-        "genres": [g["name"] for g in movie.get("genres", [])],
-        "director": ", ".join(directors) or "Unknown",
+        "tmdb_id": item.get("id", tmdb_id),
+        "media_type": kind,
+        "imdb_id": imdb_id,
+        "title": summary["title"],
+        "original_title": item.get("original_title") or item.get("original_name", ""),
+        "tagline": item.get("tagline", ""),
+        "overview": item.get("overview", ""),
+        "release_date": summary["release_date"],
+        "runtime_minutes": minutes,
+        "runtime": format_runtime(minutes)
+        + (" per episode" if kind == "tv" and minutes else ""),
+        "seasons": item.get("number_of_seasons", 0) if kind == "tv" else 0,
+        "episodes": item.get("number_of_episodes", 0) if kind == "tv" else 0,
+        "genres": [g["name"] for g in item.get("genres", [])],
+        "director": ", ".join(makers) or "Unknown",
         "cast": cast,
-        "language": movie.get("original_language", ""),
-        "rating": round(float(movie.get("vote_average") or 0), 1),
-        "vote_count": movie.get("vote_count", 0),
-        "certification": _certification(movie.get("release_dates", {})),
-        "streaming_in_india": _india_streaming(movie.get("watch/providers", {})),
-        "poster_url": _poster_url(movie.get("poster_path")),
+        "language": item.get("original_language", ""),
+        "rating": round(float(item.get("vote_average") or 0), 1),
+        "vote_count": item.get("vote_count", 0),
+        "certification": certification,
+        "streaming_in_india": _india_streaming(item.get("watch/providers", {})),
+        "poster_url": _poster_url(item.get("poster_path")),
     }
 
 
-def fetch_movie_credits(movie_id: int, cast_limit: int = 10) -> dict:
-    """Get the full cast and key crew for a movie by TMDB ID.
+def fetch_credits(tmdb_id: int, media_type: str = "movie", cast_limit: int = 10) -> dict:
+    """Get the full cast and key crew for a movie or series by TMDB ID.
 
-    Use this when the user asks specifically about who acted in or made a film,
-    beyond the top-billed names in fetch_movie_details.
+    Use this when the user asks specifically about who acted in or made
+    something, beyond the top-billed names in fetch_title_details.
 
     Args:
-        movie_id: The TMDB movie ID, e.g. 109123.
+        tmdb_id: The TMDB ID, e.g. 109123.
+        media_type: "movie" (default) or "tv". A TMDB ID means different things
+            in each catalogue, so this must match where the ID came from.
         cast_limit: How many cast members to return. Defaults to 10, capped at 30.
 
     Returns:
         dict with ``status`` and, on success, ``cast`` (name and character) plus
-        the director, writers, composer and cinematographer.
+        the director or creator, writers, composer and cinematographer.
     """
-    if not movie_id:
-        return {"status": "error", "error_message": "A TMDB movie ID is required."}
+    if not tmdb_id:
+        return {"status": "error", "error_message": "A TMDB ID is required."}
 
+    kind = normalise_media_type(media_type) or "movie"
     cast_limit = max(1, min(int(cast_limit or 10), 30))
 
     try:
-        payload = _get(f"/movie/{movie_id}/credits")
+        payload = _get(f"/{kind}/{tmdb_id}/credits")
     except TMDBError as exc:
         return {"status": "error", "error_message": str(exc)}
 
@@ -448,7 +590,8 @@ def fetch_movie_credits(movie_id: int, cast_limit: int = 10) -> dict:
 
     return {
         "status": "success",
-        "tmdb_id": movie_id,
+        "tmdb_id": tmdb_id,
+        "media_type": kind,
         "cast": [
             {"name": p.get("name", ""), "character": p.get("character", "")}
             for p in payload.get("cast", [])[:cast_limit]

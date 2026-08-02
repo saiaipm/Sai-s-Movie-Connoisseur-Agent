@@ -37,7 +37,7 @@ class FakeWorksheet:
 @pytest.fixture(autouse=True)
 def no_tmdb(monkeypatch):
     monkeypatch.setattr(
-        tmdb, "fetch_movie_details", lambda *_a, **_k: {"status": "error"}
+        tmdb, "fetch_title_details", lambda *_a, **_k: {"status": "error"}
     )
 
 

@@ -98,7 +98,7 @@ def test_format_runtime(minutes, expected):
 
 
 def test_unknown_provider_returns_error():
-    result = tmdb.fetch_ott_movies(provider="Hulu")
+    result = tmdb.fetch_ott_titles(provider="Hulu")
     assert result["status"] == "error"
     assert "Hulu" in result["error_message"]
 
@@ -106,19 +106,19 @@ def test_unknown_provider_returns_error():
 def test_unknown_genre_returns_error(monkeypatch):
     # A genre outside the static table falls through to the live list; stub it
     # so the test stays offline.
-    monkeypatch.setattr(tmdb, "_live_genre_map", lambda: {})
-    result = tmdb.fetch_ott_movies(provider="Netflix", genre="Wuxia")
+    monkeypatch.setattr(tmdb, "_live_genre_map", lambda *_a, **_k: {})
+    result = tmdb.fetch_ott_titles(provider="Netflix", genre="Wuxia")
     assert result["status"] == "error"
     assert "Wuxia" in result["error_message"]
 
 
 def test_empty_search_returns_error():
-    assert tmdb.search_movies("  ")["status"] == "error"
+    assert tmdb.search_titles("  ")["status"] == "error"
 
 
 def test_missing_api_key_is_reported(monkeypatch):
     monkeypatch.setattr(config, "TMDB_API_KEY", "")
-    result = tmdb.fetch_ott_movies(provider="Netflix")
+    result = tmdb.fetch_ott_titles(provider="Netflix")
     assert result["status"] == "error"
     assert "TMDB_API_KEY" in result["error_message"]
 
@@ -210,7 +210,7 @@ def captured_request(monkeypatch):
 
 
 def test_discover_query_is_built_correctly(captured_request):
-    tmdb.fetch_ott_movies(
+    tmdb.fetch_ott_titles(
         provider="Disney+ Hotstar", genre="Comedy", release_year=2024,
         language="Hindi", min_rating=7.0,
     )
@@ -229,7 +229,7 @@ def test_discover_query_is_built_correctly(captured_request):
 
 
 def test_unset_filters_are_omitted_from_the_query(captured_request):
-    tmdb.fetch_ott_movies(provider="Netflix")
+    tmdb.fetch_ott_titles(provider="Netflix")
     params = captured_request["params"]
 
     assert params["with_watch_providers"] == 8
@@ -240,7 +240,7 @@ def test_unset_filters_are_omitted_from_the_query(captured_request):
 
 
 def test_details_request_appends_credits_and_providers(captured_request):
-    result = tmdb.fetch_movie_details("109123")
+    result = tmdb.fetch_title_details("109123")
     assert captured_request["url"].endswith("/movie/109123")
     assert captured_request["params"]["append_to_response"] == (
         "credits,release_dates,watch/providers"
@@ -264,7 +264,7 @@ def test_blocked_primary_host_fails_over_to_alias(monkeypatch):
     monkeypatch.setattr(config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(tmdb.requests, "get", flaky_get)
 
-    assert tmdb.fetch_ott_movies(provider="Netflix")["status"] == "success"
+    assert tmdb.fetch_ott_titles(provider="Netflix")["status"] == "success"
     assert len(attempted) == 2
     assert attempted[1].startswith("https://api.tmdb.org")
 
@@ -281,8 +281,8 @@ def test_working_host_is_reused_without_reprobing(monkeypatch):
     monkeypatch.setattr(config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(tmdb.requests, "get", flaky_get)
 
-    tmdb.fetch_ott_movies(provider="Netflix")
-    tmdb.fetch_ott_movies(provider="Zee5")
+    tmdb.fetch_ott_titles(provider="Netflix")
+    tmdb.fetch_ott_titles(provider="Zee5")
 
     # Second call must go straight to the alias, not retry the blocked host.
     assert attempted[2:] == ["https://api.tmdb.org/3/discover/movie"]
@@ -296,7 +296,7 @@ def test_all_hosts_unreachable_reports_error(monkeypatch):
     monkeypatch.setattr(config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(tmdb.requests, "get", always_fails)
 
-    result = tmdb.fetch_ott_movies(provider="Netflix")
+    result = tmdb.fetch_ott_titles(provider="Netflix")
     assert result["status"] == "error"
     assert "Could not reach TMDB" in result["error_message"]
 
@@ -319,16 +319,16 @@ def test_bad_key_does_not_retry_the_other_host(monkeypatch):
     monkeypatch.setattr(config, "TMDB_API_KEY", "wrong-key")
     monkeypatch.setattr(tmdb.requests, "get", unauthorized_get)
 
-    result = tmdb.fetch_ott_movies(provider="Netflix")
+    result = tmdb.fetch_ott_titles(provider="Netflix")
     assert result["status"] == "error"
     assert "401" in result["error_message"]
     assert len(attempted) == 1
 
 
 def test_empty_discover_result_is_success_not_error(captured_request):
-    result = tmdb.fetch_ott_movies(provider="Zee5", genre="Western")
+    result = tmdb.fetch_ott_titles(provider="Zee5", genre="Western")
     assert result["status"] == "success"
-    assert result["movies"] == []
+    assert result["results"] == []
     assert "message" in result
 
 

@@ -27,8 +27,18 @@ def test_coordinator_has_no_tools_of_its_own():
 @pytest.mark.parametrize(
     "agent,expected",
     [
-        (agents.discovery_agent, {"fetch_ott_movies", "search_movies", "list_ott_providers"}),
-        (agents.critic_agent, {"fetch_movie_details", "fetch_movie_credits", "search_movies"}),
+        (agents.discovery_agent, {"fetch_ott_titles", "search_titles", "list_ott_providers"}),
+        (
+            agents.critic_agent,
+            {
+                "fetch_title_details",
+                "fetch_credits",
+                "search_titles",
+                # TMDB carries only its own community score; IMDb, Rotten
+                # Tomatoes and Metacritic come from OMDb.
+                "fetch_external_ratings",
+            },
+        ),
         (
             agents.journal_agent,
             {
@@ -39,7 +49,7 @@ def test_coordinator_has_no_tools_of_its_own():
                 "get_watchlist",
                 "remove_from_watchlist",
                 # Needed for the confirm-before-adding step on the watchlist.
-                "search_movies",
+                "search_titles",
             },
         ),
     ],
