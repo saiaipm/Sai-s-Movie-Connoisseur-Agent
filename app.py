@@ -185,10 +185,16 @@ def render_account(write_enabled: bool, email: str, is_owner: bool) -> None:
         if st.button("Sign out", use_container_width=True):
             st.logout()
     else:
-        st.info(
-            "**Read-only.** Ask anything about films and browse the journal. "
-            "The owner can sign in for full access."
-        )
+        # Nobody signed in. Locally WRITE_ENABLED can still be true, so do not
+        # claim read-only without checking — the message would contradict what
+        # the app actually allows.
+        if write_enabled:
+            st.success("Full access (enabled for this deployment)")
+        else:
+            st.info(
+                "**Read-only.** Ask anything about films and browse the journal. "
+                "The owner can sign in for full access."
+            )
         if st.button("Sign in with Google", use_container_width=True):
             st.login("google")
 
@@ -449,12 +455,92 @@ def _rating_cells(entry: dict) -> dict:
     }
 
 
+# --- Journal statistics ----------------------------------------------------
+
+# Below this many entries a "top genre" is noise, not a finding. Better to say
+# so than to draw a one-bar chart and imply a pattern that is not there.
+MIN_FOR_BREAKDOWN = 5
+MIN_FOR_CADENCE = 2  # distinct months
+
+
+def render_journal_stats(entries: list[dict], total: int) -> None:
+    stats = journal.summarise_entries(entries)
+
+    series = stats["media_types"].get("tv", 0)
+    films = total - series
+
+    top_genre = stats["genres"][0] if stats["genres"] else None
+    top_platform = stats["platforms"][0] if stats["platforms"] else None
+    taste = stats["taste"]
+
+    a, b, c, d = st.columns(4)
+    a.metric(
+        "Titles logged",
+        total,
+        help=f"{films} film(s), {series} series" if series else None,
+    )
+    b.metric(
+        "Top genre",
+        top_genre[0] if top_genre else "—",
+        help=f"{top_genre[1]} of {total} titles" if top_genre else None,
+    )
+    c.metric(
+        "Most watched on",
+        top_platform[0] if top_platform else "—",
+        help=f"{top_platform[1]} of {total} titles" if top_platform else None,
+    )
+    if taste:
+        d.metric(
+            "You vs critics",
+            f"{taste['yours']}/10",
+            delta=f"{taste['delta']:+.1f} vs IMDb",
+            help=(
+                f"Your average rating doubled to a /10 scale, against IMDb for "
+                f"the same {taste['sample']} title(s) you rated."
+            ),
+        )
+    else:
+        d.metric("You vs critics", "—", help="Rate some titles to compare.")
+
+    if total < MIN_FOR_BREAKDOWN:
+        st.caption(
+            f"Genre and platform breakdowns appear once you have logged "
+            f"{MIN_FOR_BREAKDOWN} titles — below that they say more about "
+            "chance than taste."
+        )
+        return
+
+    left, right = st.columns(2)
+    with left:
+        st.caption("**Genres** — a title counts towards each of its genres")
+        st.bar_chart(
+            pd.DataFrame(stats["genres"][:8], columns=["Genre", "Titles"]).set_index(
+                "Genre"
+            ),
+            horizontal=True,
+        )
+    with right:
+        st.caption("**Platforms**")
+        st.bar_chart(
+            pd.DataFrame(stats["platforms"], columns=["Platform", "Titles"]).set_index(
+                "Platform"
+            ),
+            horizontal=True,
+        )
+
+    if len(stats["months"]) >= MIN_FOR_CADENCE:
+        st.caption("**Titles per month**")
+        st.bar_chart(
+            pd.DataFrame(stats["months"], columns=["Month", "Titles"]).set_index("Month")
+        )
+
+
 # --- Journal tab -----------------------------------------------------------
 
 
 def render_journal_tab(write_enabled: bool) -> None:
     left, right = st.columns([3, 1])
-    left.subheader("Your movie journal" if write_enabled else "Movie journal")
+    left.subheader("Your journal" if write_enabled else "Journal")
     if right.button("Refresh", use_container_width=True):
         journal.reset_connection()
         st.rerun()
@@ -478,22 +564,13 @@ def render_journal_tab(write_enabled: bool) -> None:
     entries = result["entries"]
     if not entries:
         st.info(
-            "Nothing logged yet. Tell the agent what you watched and it'll appear here."
+            "Nothing logged yet. Tell the agent what you watched and it will appear here."
             if write_enabled
             else "Nothing logged yet."
         )
         return
 
-    rated = [e["rating"] for e in entries if e["rating"]]
-    platforms = [e["platform"] for e in entries if e["platform"]]
-
-    a, b, c = st.columns(3)
-    a.metric("Movies logged", result["total_logged"])
-    b.metric("Average rating", f"{sum(rated) / len(rated):.1f}/5" if rated else "—")
-    c.metric(
-        "Most watched on",
-        max(set(platforms), key=platforms.count) if platforms else "—",
-    )
+    render_journal_stats(entries, result["total_logged"])
 
     st.dataframe(
         _numeric_frame(

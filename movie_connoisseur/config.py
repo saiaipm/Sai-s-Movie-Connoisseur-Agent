@@ -455,6 +455,12 @@ JOURNAL_HEADERS: list[str] = [
     "RT_Rating",
     "Metacritic",
     "Synopsis",
+    # Added in v1.3 for television. Appended rather than slotted next to
+    # Movie_Title on purpose: header reconciliation only rewrites row 1, so
+    # inserting a column mid-sheet would relabel every column to its right
+    # without moving the data underneath.
+    "Media_Type",
+    "Seasons",
 ]
 
 # "Want to watch" lives in its own worksheet rather than as a flag on the
@@ -478,6 +484,8 @@ WATCHLIST_HEADERS: list[str] = [
     "RT_Rating",
     "Metacritic",
     "Synopsis",
+    "Media_Type",
+    "Seasons",
 ]
 
 GOOGLE_API_SCOPES = [

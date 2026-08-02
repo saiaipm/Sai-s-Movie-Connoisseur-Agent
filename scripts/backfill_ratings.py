@@ -32,6 +32,8 @@ FILLED_COLUMNS = [
     "RT_Rating",
     "Metacritic",
     "Synopsis",
+    "Media_Type",
+    "Seasons",
 ]
 
 # Sheet header -> key in the dict _movie_metadata returns.
@@ -42,6 +44,8 @@ FIELD_FOR = {
     "RT_Rating": "rt_rating",
     "Metacritic": "metacritic",
     "Synopsis": "synopsis",
+    "Media_Type": "media_type",
+    "Seasons": "seasons",
 }
 
 
@@ -78,7 +82,7 @@ def plan_for(rows, headers, force: bool):
         found = [c for c in FILLED_COLUMNS if str(meta[FIELD_FOR[c]]).strip()]
         missing = [c for c in FILLED_COLUMNS if c not in found]
         report.append(
-            (title, "fill", f"got {len(found)}/6" + (f", blank: {', '.join(missing)}" if missing else ""))
+            (title, "fill", f"got {len(found)}/{len(FILLED_COLUMNS)}" + (f", blank: {', '.join(missing)}" if missing else ""))
         )
 
     return updates, report

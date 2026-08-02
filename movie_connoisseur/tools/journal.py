@@ -150,6 +150,8 @@ def _movie_metadata(title: str) -> dict[str, Any]:
         "rt_rating": "",
         "metacritic": "",
         "synopsis": "",
+        "media_type": "",
+        "seasons": "",
     }
 
     details = tmdb.fetch_title_details(title)
@@ -172,6 +174,10 @@ def _movie_metadata(title: str) -> dict[str, Any]:
         "rt_rating": ratings["rt_rating"],
         "metacritic": ratings["metacritic"],
         "synopsis": details.get("overview", ""),
+        "media_type": details.get("media_type", "movie"),
+        # Only meaningful for a series; blank rather than 0 for films so the
+        # column reads cleanly in the sheet.
+        "seasons": details.get("seasons") or "",
     }
 
 
@@ -242,6 +248,73 @@ def _sort_newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def summarise_entries(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate journal entries into the dashboard statistics.
+
+    Pure and Streamlit-free so it can be tested directly.
+
+    Every figure reports the sample it was computed from, because a "top
+    genre" drawn from three films is noise dressed up as insight — the UI
+    uses that count to decide whether to show the figure at all.
+    """
+    from collections import Counter
+
+    def as_number(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    genres: Counter[str] = Counter()
+    platforms: Counter[str] = Counter()
+    months: Counter[str] = Counter()
+    kinds: Counter[str] = Counter()
+    paired: list[tuple[float, float]] = []
+
+    for entry in entries:
+        # Genre is a comma-separated list, so a row counts towards each.
+        for genre in str(entry.get("genre", "")).split(","):
+            name = genre.strip()
+            if name:
+                genres[name] += 1
+
+        platform = str(entry.get("platform", "")).strip()
+        if platform:
+            platforms[platform] += 1
+
+        watched = str(entry.get("watch_date", ""))[:7]
+        if len(watched) == 7:
+            months[watched] += 1
+
+        kinds[str(entry.get("media_type") or "movie")] += 1
+
+        # Only films the user actually rated can be compared with the critics.
+        mine, theirs = as_number(entry.get("rating")), as_number(entry.get("imdb_rating"))
+        if mine and theirs:
+            paired.append((mine, theirs))
+
+    taste = None
+    if paired:
+        # User ratings are out of 5, IMDb out of 10, so double before comparing.
+        mine_avg = sum(p[0] for p in paired) / len(paired) * 2
+        theirs_avg = sum(p[1] for p in paired) / len(paired)
+        taste = {
+            "yours": round(mine_avg, 1),
+            "critics": round(theirs_avg, 1),
+            "delta": round(mine_avg - theirs_avg, 1),
+            "sample": len(paired),
+        }
+
+    return {
+        "total": len(entries),
+        "genres": genres.most_common(),
+        "platforms": platforms.most_common(),
+        "months": sorted(months.items()),
+        "media_types": dict(kinds),
+        "taste": taste,
+    }
+
+
 def _to_entry(row: dict[str, Any]) -> dict[str, Any]:
     """Convert a raw sheet row into the entry shape the agent presents."""
     try:
@@ -267,6 +340,9 @@ def _to_entry(row: dict[str, Any]) -> dict[str, Any]:
         "rt_rating": row.get("RT_Rating", ""),
         "metacritic": row.get("Metacritic", ""),
         "synopsis": str(row.get("Synopsis", "")),
+        # Blank for rows written before television was supported.
+        "media_type": str(row.get("Media_Type", "")),
+        "seasons": row.get("Seasons", ""),
     }
 
 
@@ -348,6 +424,8 @@ def add_to_journal(
         meta["rt_rating"],
         meta["metacritic"],
         meta["synopsis"],
+        meta["media_type"],
+        meta["seasons"],
     ]
 
     try:
@@ -383,6 +461,8 @@ def add_to_journal(
             "rt_rating": meta["rt_rating"],
             "metacritic": meta["metacritic"],
             "synopsis": meta["synopsis"],
+            "media_type": meta["media_type"],
+            "seasons": meta["seasons"],
         },
     }
 
@@ -444,6 +524,9 @@ def _to_watchlist_entry(row: dict[str, Any]) -> dict[str, Any]:
         "rt_rating": row.get("RT_Rating", ""),
         "metacritic": row.get("Metacritic", ""),
         "synopsis": str(row.get("Synopsis", "")),
+        # Blank for rows written before television was supported.
+        "media_type": str(row.get("Media_Type", "")),
+        "seasons": row.get("Seasons", ""),
     }
 
 
@@ -507,6 +590,8 @@ def add_to_watchlist(
                 meta["rt_rating"],
                 meta["metacritic"],
                 meta["synopsis"],
+                meta["media_type"],
+                meta["seasons"],
             ],
             value_input_option="USER_ENTERED",
         )
@@ -531,6 +616,8 @@ def add_to_watchlist(
             "rt_rating": meta["rt_rating"],
             "metacritic": meta["metacritic"],
             "synopsis": meta["synopsis"],
+            "media_type": meta["media_type"],
+            "seasons": meta["seasons"],
         },
     }
 
