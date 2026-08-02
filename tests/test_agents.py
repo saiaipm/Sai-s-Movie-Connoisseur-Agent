@@ -28,7 +28,17 @@ def test_coordinator_has_no_tools_of_its_own():
     "agent,expected",
     [
         (agents.discovery_agent, {"fetch_ott_movies", "search_movies", "list_ott_providers"}),
-        (agents.critic_agent, {"fetch_movie_details", "fetch_movie_credits", "search_movies"}),
+        (
+            agents.critic_agent,
+            {
+                "fetch_movie_details",
+                "fetch_movie_credits",
+                "search_movies",
+                # TMDB carries only its own community score; IMDb, Rotten
+                # Tomatoes and Metacritic come from OMDb.
+                "fetch_external_ratings",
+            },
+        ),
         (
             agents.journal_agent,
             {

@@ -28,6 +28,9 @@ INCEPTION = {
 TUMBBAD = {
     "Response": "True",
     "Title": "Tumbbad",
+    "Year": "2018",
+    "Language": "Hindi, Marathi",
+    "Country": "India",
     "imdbID": "tt8239946",
     "imdbRating": "8.2",
     "Metascore": "N/A",
@@ -207,6 +210,39 @@ def test_ratings_or_blank_survives_an_unexpected_exception(monkeypatch):
     monkeypatch.setattr(omdb, "fetch_external_ratings", boom)
     result = omdb.ratings_or_blank(imdb_id="tt1375666")
     assert result == {"imdb_rating": "", "rt_rating": "", "metacritic": ""}
+
+
+def test_year_and_language_are_returned(omdb_returns):
+    """Grounding, not decoration.
+
+    Without these the model supplied them from memory and got both wrong,
+    describing Tumbbad as a 2015 Telugu film rather than a 2018 Hindi/Marathi
+    one.
+    """
+    omdb_returns(TUMBBAD)
+    result = omdb.fetch_external_ratings(imdb_id="tt8239946")
+
+    assert result["year"] == "2018"
+    assert result["language"] == "Hindi, Marathi"
+    assert result["country"] == "India"
+
+
+def test_the_critic_agent_can_fetch_critic_scores():
+    """The Critic answers "how was it received?", so it needs this tool."""
+    from movie_connoisseur import agents
+
+    names = {t.__name__ for t in agents.critic_agent.tools}
+    assert "fetch_external_ratings" in names
+
+
+def test_only_the_critic_gets_it():
+    """Discovery returns lists — a rating call per result would be wasteful."""
+    from movie_connoisseur import agents
+
+    for agent in agents.coordinator_agent.sub_agents:
+        if agent.name == "critic_agent":
+            continue
+        assert "fetch_external_ratings" not in {t.__name__ for t in agent.tools}
 
 
 def test_ratings_or_blank_passes_values_through(omdb_returns):

@@ -89,9 +89,10 @@ def fetch_external_ratings(imdb_id: str = "", title: str = "") -> dict:
 
     Returns:
         dict with ``status`` and, on success, ``imdb_rating`` (out of 10),
-        ``rt_rating`` and ``metacritic`` (both out of 100). Any of the three
-        may be an empty string when that source has no score for the film,
-        which is common for Indian cinema.
+        ``rt_rating`` and ``metacritic`` (both out of 100), plus the film's
+        ``year``, ``language`` and ``country`` for context. Any of the three
+        ratings may be an empty string when that source has no score for the
+        film, which is common for Indian cinema.
     """
     if not config.OMDB_API_KEY:
         return {
@@ -119,6 +120,12 @@ def fetch_external_ratings(imdb_id: str = "", title: str = "") -> dict:
         "status": "success",
         "imdb_id": _clean(payload.get("imdbID")),
         "title": _clean(payload.get("Title")),
+        # Year, language and country are returned so the model does not have to
+        # supply them from memory. Without them it invented both — calling
+        # Tumbbad a 2015 Telugu film when it is a 2018 Hindi/Marathi one.
+        "year": _clean(payload.get("Year")),
+        "language": _clean(payload.get("Language")),
+        "country": _clean(payload.get("Country")),
         "imdb_rating": _to_number(payload.get("imdbRating", "")),
         "imdb_votes": _clean(payload.get("imdbVotes")),
         "rt_rating": _rating_from(payload, "Rotten Tomatoes"),

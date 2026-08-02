@@ -26,6 +26,7 @@ from movie_connoisseur.tools.journal import (
     get_watchlist,
     remove_from_watchlist,
 )
+from movie_connoisseur.tools.omdb import fetch_external_ratings
 from movie_connoisseur.tools.tmdb import (
     fetch_movie_credits,
     fetch_movie_details,
@@ -161,8 +162,9 @@ their watchlist, hand off to journal_agent.
 
 CRITIC_DESCRIPTION = (
     "Answers questions about a specific known movie: plot, cast, director, "
-    "crew, runtime, age rating, community rating, and where it streams in "
-    "India. Also helps the user decide whether to watch it."
+    "crew, runtime, age rating, and how it was received — the TMDB community "
+    "score plus IMDb, Rotten Tomatoes and Metacritic. Also covers where it "
+    "streams in India, and helps the user decide whether to watch it."
 )
 
 CRITIC_INSTRUCTION = """\
@@ -175,6 +177,18 @@ wants cast or crew beyond the top five names.
 If the title is ambiguous (a remake, or several films share the name), call
 `search_movies` and ask which one they mean, giving the release years.
 
+**Critic scores** — `fetch_movie_details` returns only TMDB's community score.
+For IMDb, Rotten Tomatoes or Metacritic, call `fetch_external_ratings`. Reach
+for it whenever the user asks about reviews, critics, IMDb, Rotten Tomatoes,
+scores, or how well a film was received.
+- Pass the `imdb_id` from `fetch_movie_details` when you already have it; it is
+  exact. Otherwise just pass the title.
+- Any of the three can come back empty, which is normal rather than an error —
+  Metacritic in particular is missing for most Indian films. Say a score is not
+  available; never guess one or fill it in from memory.
+- The result also carries the film's year, language and country. Use those if
+  you mention them. Do not state a year or language the tools did not give you.
+
 Presenting a film:
 **Title (Year)** — ⭐ rating/10
 *Director · runtime · genres · certification*
@@ -182,8 +196,16 @@ A two or three sentence take on the plot, spoiler-free.
 **Starring:** top cast
 **Streaming in India:** platforms, or "not currently streaming in India"
 
+When you have fetched critic scores, add a line, omitting any that are absent:
+**Critics:** IMDb 8.8/10 · Rotten Tomatoes 87% · Metacritic 74
+
+Note the scales differ — IMDb is out of 10, Rotten Tomatoes and Metacritic out
+of 100. Never present them as if they were the same scale.
+
 When asked whether it is worth watching, give a real opinion grounded in the
-rating, genre and cast the tool returned — not a hedge.
+ratings, genre and cast the tools returned — not a hedge. Where the scores
+disagree, say so: TMDB's smaller voter base often under-rates Indian cinema
+relative to IMDb.
 
 If the user wants to log it as watched, or save it to their watchlist, hand off
 to journal_agent.
@@ -328,7 +350,12 @@ def build_agent_tree(write_enabled: bool | None = None, model=None) -> LlmAgent:
         model=model,
         description=CRITIC_DESCRIPTION,
         instruction=CRITIC_INSTRUCTION,
-        tools=[fetch_movie_details, fetch_movie_credits, search_movies],
+        tools=[
+            fetch_movie_details,
+            fetch_movie_credits,
+            search_movies,
+            fetch_external_ratings,
+        ],
     )
 
     journal_agent = LlmAgent(
