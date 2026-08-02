@@ -50,38 +50,38 @@ def test_tmdb() -> None:
 
     # Workflow A from the PRD.
     check(
-        'fetch_ott_movies(provider="Netflix", genre="Thriller")',
-        tmdb.fetch_ott_movies(provider="Netflix", genre="Thriller", limit=5),
+        'fetch_ott_titles(provider="Netflix", genre="Thriller")',
+        tmdb.fetch_ott_titles(provider="Netflix", genre="Thriller", limit=5),
         expect_rows="movies",
     )
     check(
-        'fetch_ott_movies(provider="8", genre="53") — PRD ID form',
-        tmdb.fetch_ott_movies(provider="8", genre="53", limit=3),
+        'fetch_ott_titles(provider="8", genre="53") — PRD ID form',
+        tmdb.fetch_ott_titles(provider="8", genre="53", limit=3),
         expect_rows="movies",
     )
     check(
-        'fetch_ott_movies(language="Tamil", min_rating=7.0)',
-        tmdb.fetch_ott_movies(language="Tamil", min_rating=7.0, limit=3),
+        'fetch_ott_titles(language="Tamil", min_rating=7.0)',
+        tmdb.fetch_ott_titles(language="Tamil", min_rating=7.0, limit=3),
         expect_rows="movies",
     )
     check(
-        'search_movies("Maharaja")',
-        tmdb.search_movies("Maharaja", limit=3),
+        'search_titles("Maharaja")',
+        tmdb.search_titles("Maharaja", limit=3),
         expect_rows="movies",
     )
     details = check(
-        'fetch_movie_details("Stree 2")',
-        tmdb.fetch_movie_details("Stree 2"),
+        'fetch_title_details("Stree 2")',
+        tmdb.fetch_title_details("Stree 2"),
     )
     if details.get("status") == "success":
         check(
-            f"fetch_movie_credits({details['tmdb_id']})",
-            tmdb.fetch_movie_credits(details["tmdb_id"], cast_limit=5),
+            f"fetch_credits({details['tmdb_id']})",
+            tmdb.fetch_credits(details["tmdb_id"], cast_limit=5),
             expect_rows="cast",
         )
 
     # Error paths should degrade politely, not raise.
-    bad = tmdb.fetch_ott_movies(provider="Hulu")
+    bad = tmdb.fetch_ott_titles(provider="Hulu")
     print(f"\n{'PASS' if bad['status'] == 'error' else 'FAIL'}  unknown provider is rejected")
     print(f"  {bad.get('error_message', '')[:160]}")
     globals()['PASSED' if bad['status'] == 'error' else 'FAILED'] += 1

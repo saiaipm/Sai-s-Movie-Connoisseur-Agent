@@ -26,7 +26,7 @@ def offline(monkeypatch):
     """Keep demo mode off and TMDB enrichment out of the way by default."""
     monkeypatch.setattr(config, "DEMO_MODE", False)
     monkeypatch.setattr(
-        tmdb, "fetch_movie_details", lambda *_a, **_k: {"status": "error"}
+        tmdb, "fetch_title_details", lambda *_a, **_k: {"status": "error"}
     )
 
 
@@ -96,7 +96,7 @@ def test_add_enriches_from_tmdb(monkeypatch):
     sheet = FakeWorksheet()
     monkeypatch.setattr(
         tmdb,
-        "fetch_movie_details",
+        "fetch_title_details",
         lambda *_a, **_k: {
             "status": "success",
             "title": "Maharaja",

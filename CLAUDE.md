@@ -1,4 +1,4 @@
-# Movie Connoisseur — working notes
+# Sai's Streaming Companion — working notes
 
 Conversational multi-agent assistant for Indian OTT movie discovery, film
 metadata, and a Google Sheets movie journal. Google ADK + Streamlit.

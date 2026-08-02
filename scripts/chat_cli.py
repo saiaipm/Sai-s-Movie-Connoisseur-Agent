@@ -58,7 +58,7 @@ def main() -> int:
                 show(chat.send(prompt), debug=True)
             return 0
 
-        print("Movie Connoisseur — type 'exit' to quit, '/debug' to toggle detail.\n")
+        print("Sai's Streaming Companion — type 'exit' to quit, '/debug' to toggle detail.\n")
         while True:
             try:
                 message = input("You: ").strip()

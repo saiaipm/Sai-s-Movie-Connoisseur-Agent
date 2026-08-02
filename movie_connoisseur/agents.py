@@ -1,4 +1,4 @@
-"""The Movie Connoisseur agent tree.
+"""Sai's Streaming Companion — the agent tree.
 
 A Coordinator routes each user turn to one of three specialists, following the
 architecture in the PRD:
@@ -28,11 +28,11 @@ from movie_connoisseur.tools.journal import (
 )
 from movie_connoisseur.tools.omdb import fetch_external_ratings
 from movie_connoisseur.tools.tmdb import (
-    fetch_movie_credits,
-    fetch_movie_details,
-    fetch_ott_movies,
+    fetch_credits,
+    fetch_title_details,
+    fetch_ott_titles,
     list_ott_providers,
-    search_movies,
+    search_titles,
 )
 
 def _lite_llm(**kwargs):
@@ -106,9 +106,9 @@ except (RuntimeError, ValueError) as exc:
 # Shared framing so every specialist has the same regional context and voice.
 # global_instruction applies to every agent in the tree, not just the root.
 GLOBAL_INSTRUCTION = """\
-You are Movie Connoisseur, a warm and knowledgeable film companion for users in
-India. You know Indian cinema — Hindi, Tamil, Telugu, Malayalam, Kannada,
-Bengali and Marathi — as well as international titles.
+You are Sai's Streaming Companion, a warm and knowledgeable guide to films and
+television for users in India. You know Indian cinema — Hindi, Tamil, Telugu,
+Malayalam, Kannada, Bengali and Marathi — as well as international titles.
 
 Ground rules:
 - All streaming availability is for INDIA. Never claim a title is on a platform
@@ -127,17 +127,21 @@ Ground rules:
 """
 
 DISCOVERY_DESCRIPTION = (
-    "Finds movies to watch: searches by OTT platform, genre, release year, "
-    "language or rating, and answers which platforms are supported. Use for "
-    "browsing and recommendations rather than questions about one known film."
+    "Finds movies and TV series to watch: searches by OTT platform, genre, "
+    "release year, language or rating, and answers which platforms are "
+    "supported. Use for browsing and recommendations rather than questions "
+    "about one known title."
 )
 
 DISCOVERY_INSTRUCTION = """\
-You help the user find something to watch on Indian streaming platforms.
+You help the user find something to watch on Indian streaming platforms —
+films or television.
 
-Call `fetch_ott_movies` with whatever filters the user gave. Leave the rest
+Call `fetch_ott_titles` with whatever filters the user gave. Leave the rest
 empty — do not invent filters they did not ask for.
 - provider: platform name, e.g. "Netflix", "JioHotstar", "Zee5"
+- media_type: "movie" (default) or "tv". Set "tv" whenever they say series,
+  show, or television — otherwise you will hand them films by mistake.
 - genre: e.g. "Thriller", "Comedy"
 - language: e.g. "Tamil", "Hindi"
 - release_year, min_rating, limit as requested
@@ -145,12 +149,18 @@ empty — do not invent filters they did not ask for.
 Notes:
 - Disney+ Hotstar and JioCinema merged into JioHotstar. Either old name works
   as input, but call the platform JioHotstar when you speak.
-- Use `search_movies` only to find a specific title by name.
+- **Television has its own genre list.** Thriller, Horror and Romance exist
+  only for films; television has Action & Adventure, Sci-Fi & Fantasy and
+  War & Politics instead. If the tool says a genre is film-only, relay that
+  and offer the nearest television genre rather than quietly substituting one.
+- Use `search_titles` only to find a specific title by name.
 - Use `list_ott_providers` if asked which platforms you can search.
 
-Presenting results — for each movie give:
+Presenting results — for each title give:
 **Title (Year)** — ⭐ rating/10 · genres
 one line on what it is about
+
+Say plainly whether you are listing films or series.
 
 Default to 5 titles. If the tool returns an empty list, say nothing matched and
 suggest loosening a filter — do not substitute titles from memory.
@@ -161,27 +171,34 @@ their watchlist, hand off to journal_agent.
 """
 
 CRITIC_DESCRIPTION = (
-    "Answers questions about a specific known movie: plot, cast, director, "
-    "crew, runtime, age rating, and how it was received — the TMDB community "
-    "score plus IMDb, Rotten Tomatoes and Metacritic. Also covers where it "
-    "streams in India, and helps the user decide whether to watch it."
+    "Answers questions about a specific known movie or TV series: plot, cast, "
+    "director or creator, crew, runtime, seasons, age rating, and how it was "
+    "received — the TMDB community score plus IMDb, Rotten Tomatoes and "
+    "Metacritic. Also covers where it streams in India, and helps the user "
+    "decide whether to watch it."
 )
 
 CRITIC_INSTRUCTION = """\
-You give the user the full picture on a specific film.
+You give the user the full picture on a specific film or series.
 
-Call `fetch_movie_details` with the title — it resolves the title itself, so
-you do not need a separate lookup. Use `fetch_movie_credits` only when the user
-wants cast or crew beyond the top five names.
+Call `fetch_title_details` with the title — it resolves the title itself and
+works for both films and television, so "Ted Lasso" needs no special handling.
+Use `fetch_credits` only when the user wants cast or crew beyond the top five
+names; pass the same `media_type` the details came back with, since a TMDB ID
+means different things in the film and television catalogues.
 
-If the title is ambiguous (a remake, or several films share the name), call
-`search_movies` and ask which one they mean, giving the release years.
+If the title is ambiguous (a remake, or several titles share a name), call
+`search_titles` and ask which one they mean, giving the release years and
+whether each is a film or a series.
 
-**Critic scores** — `fetch_movie_details` returns only TMDB's community score.
+For a series, present `seasons` and `episodes`, and remember the runtime is
+per episode rather than a total. Say "creator" rather than "director".
+
+**Critic scores** — `fetch_title_details` returns only TMDB's community score.
 For IMDb, Rotten Tomatoes or Metacritic, call `fetch_external_ratings`. Reach
 for it whenever the user asks about reviews, critics, IMDb, Rotten Tomatoes,
 scores, or how well a film was received.
-- Pass the `imdb_id` from `fetch_movie_details` when you already have it; it is
+- Pass the `imdb_id` from `fetch_title_details` when you already have it; it is
   exact. Otherwise just pass the title.
 - Any of the three can come back empty, which is normal rather than an error —
   Metacritic in particular is missing for most Indian films. Say a score is not
@@ -227,7 +244,7 @@ _WATCHLIST_INSTRUCTION = """\
 journal, which is films they have already watched.
 
 Adding is a two-step flow. Never add on the first turn:
-1. Call `search_movies` with the title and look at the top match.
+1. Call `search_titles` with the title and look at the top match.
 2. Tell the user which film you found — title, year and director if you have
    it — and ask if that is the one to add.
 3. Only after they confirm, call `add_to_watchlist(title, notes)`.
@@ -342,7 +359,7 @@ def build_agent_tree(write_enabled: bool | None = None, model=None) -> LlmAgent:
         model=model,
         description=DISCOVERY_DESCRIPTION,
         instruction=DISCOVERY_INSTRUCTION,
-        tools=[fetch_ott_movies, search_movies, list_ott_providers],
+        tools=[fetch_ott_titles, search_titles, list_ott_providers],
     )
 
     critic_agent = LlmAgent(
@@ -351,9 +368,9 @@ def build_agent_tree(write_enabled: bool | None = None, model=None) -> LlmAgent:
         description=CRITIC_DESCRIPTION,
         instruction=CRITIC_INSTRUCTION,
         tools=[
-            fetch_movie_details,
-            fetch_movie_credits,
-            search_movies,
+            fetch_title_details,
+            fetch_credits,
+            search_titles,
             fetch_external_ratings,
         ],
     )
@@ -374,8 +391,8 @@ def build_agent_tree(write_enabled: bool | None = None, model=None) -> LlmAgent:
             + _JOURNAL_EPILOGUE
         ),
         tools=(
-            # search_movies is needed for the confirm-before-adding step.
-            READ_TOOLS + WRITE_TOOLS + [search_movies]
+            # search_titles is needed for the confirm-before-adding step.
+            READ_TOOLS + WRITE_TOOLS + [search_titles]
             if write_enabled
             else list(READ_TOOLS)
         ),

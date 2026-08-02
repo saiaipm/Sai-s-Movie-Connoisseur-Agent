@@ -55,8 +55,8 @@ def test_the_two_trees_differ_only_in_write_capability():
 
     ro = {t.__name__ for t in _journal_agent(agents_module.build_agent_tree(False)).tools}
     rw = {t.__name__ for t in _journal_agent(agents_module.build_agent_tree(True)).tools}
-    # search_movies only exists to support confirm-before-adding.
-    assert rw - ro == WRITE_TOOLS | {"search_movies"}
+    # search_titles only exists to support confirm-before-adding.
+    assert rw - ro == WRITE_TOOLS | {"search_titles"}
     assert ro - rw == set()
 
 

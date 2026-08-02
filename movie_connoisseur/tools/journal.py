@@ -152,7 +152,7 @@ def _movie_metadata(title: str) -> dict[str, Any]:
         "synopsis": "",
     }
 
-    details = tmdb.fetch_movie_details(title)
+    details = tmdb.fetch_title_details(title)
     if details.get("status") != "success":
         return blank
 

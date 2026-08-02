@@ -1,4 +1,4 @@
-"""Movie Connoisseur — Streamlit frontend.
+"""Sai's Streaming Companion — Streamlit frontend.
 
     uv run streamlit run app.py
 
@@ -23,7 +23,7 @@ from movie_connoisseur.chat import MovieChat
 from movie_connoisseur.tools import journal, tmdb
 
 st.set_page_config(
-    page_title="Movie Connoisseur",
+    page_title="Sai's Streaming Companion",
     page_icon="🍿",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -228,7 +228,7 @@ def render_sidebar(
     write_enabled: bool, email: str, is_owner: bool, provider: str
 ) -> None:
     with st.sidebar:
-        st.title("🍿 Movie Connoisseur")
+        st.title("🍿 Sai's Streaming Companion")
         st.caption("Discover, research and journal movies on Indian OTT.")
 
         render_account(write_enabled, email, is_owner)
@@ -615,7 +615,7 @@ PROVIDER = resolve_provider(WRITE_ENABLED)
 render_sidebar(WRITE_ENABLED, USER_EMAIL, IS_OWNER, PROVIDER)
 
 if missing_credentials() or MODEL_ERROR:
-    st.title("🍿 Movie Connoisseur")
+    st.title("🍿 Sai's Streaming Companion")
     st.warning(
         "This app is not fully configured yet — see the sidebar for what is "
         "missing, add it to the app's secrets, and reload."

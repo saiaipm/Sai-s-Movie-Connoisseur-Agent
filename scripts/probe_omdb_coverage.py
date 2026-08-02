@@ -79,7 +79,7 @@ def main() -> int:
     print("-" * 58)
 
     for title in TITLES:
-        details = tmdb.fetch_movie_details(title)
+        details = tmdb.fetch_title_details(title)
         if details["status"] != "success":
             print(f"{title:<24} {'—':>6} {'—':>6} {'—':>6}  (not on TMDB)")
             rows.append((title, "", "", "", False))
