@@ -20,7 +20,7 @@ from google.adk.tools.tool_context import ToolContext
 from google.oauth2.service_account import Credentials
 
 from movie_connoisseur import config
-from movie_connoisseur.tools import tmdb
+from movie_connoisseur.tools import omdb, tmdb
 
 # Key under which per-session write permission is stored in ADK session state.
 WRITE_ENABLED_STATE_KEY = "write_enabled"
@@ -40,6 +40,18 @@ class JournalError(RuntimeError):
 
 
 # --- Connection ------------------------------------------------------------
+
+
+def _column_letter(index: int) -> str:
+    """1-indexed column number to its A1 letter: 1 -> A, 15 -> O, 27 -> AA.
+
+    The obvious chr(ord('A') + n) breaks silently past column Z.
+    """
+    letters = ""
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(ord("A") + remainder) + letters
+    return letters
 
 
 @functools.lru_cache(maxsize=4)
@@ -71,10 +83,16 @@ def _open_worksheet(title: str, headers: tuple[str, ...]) -> gspread.Worksheet:
     except gspread.WorksheetNotFound:
         worksheet = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers))
 
+    # A sheet created with an older, shorter header set has a grid too narrow
+    # for the new one, and writing past the last column fails with "exceeds
+    # grid limits" rather than growing the sheet. Widen it first.
+    if worksheet.col_count < len(headers):
+        worksheet.add_cols(len(headers) - worksheet.col_count)
+
     if worksheet.row_values(1) != list(headers):
         worksheet.update(
             [list(headers)],
-            range_name=f"A1:{chr(ord('A') + len(headers) - 1)}1",
+            range_name=f"A1:{_column_letter(len(headers))}1",
         )
 
     return worksheet
@@ -98,6 +116,50 @@ def reset_connection() -> None:
 
 
 # --- Helpers ---------------------------------------------------------------
+
+
+def _movie_metadata(title: str) -> dict[str, Any]:
+    """Everything the sheets store about a film, from TMDB plus OMDb.
+
+    Best effort throughout: a film that cannot be resolved, or ratings that do
+    not exist, must never block the user's own entry from being written. Blank
+    fields are normal — Metacritic in particular is absent for roughly
+    two-thirds of Indian releases.
+    """
+    blank = {
+        "title": "",
+        "tmdb_id": "",
+        "imdb_id": "",
+        "genre": "",
+        "platform": "",
+        "tmdb_rating": "",
+        "imdb_rating": "",
+        "rt_rating": "",
+        "metacritic": "",
+        "synopsis": "",
+    }
+
+    details = tmdb.fetch_movie_details(title)
+    if details.get("status") != "success":
+        return blank
+
+    streaming = details.get("streaming_in_india") or []
+    ratings = omdb.ratings_or_blank(
+        imdb_id=details.get("imdb_id", ""), title=details.get("title", "")
+    )
+
+    return {
+        "title": details.get("title", ""),
+        "tmdb_id": details.get("tmdb_id", ""),
+        "imdb_id": details.get("imdb_id", ""),
+        "genre": ", ".join(details.get("genres") or []),
+        "platform": streaming[0] if streaming else "",
+        "tmdb_rating": details.get("rating", "") or "",
+        "imdb_rating": ratings["imdb_rating"],
+        "rt_rating": ratings["rt_rating"],
+        "metacritic": ratings["metacritic"],
+        "synopsis": details.get("overview", ""),
+    }
 
 
 def writes_allowed(tool_context: ToolContext | None = None) -> bool:
@@ -179,11 +241,19 @@ def _to_entry(row: dict[str, Any]) -> dict[str, Any]:
         "watch_date": str(row.get("Watch_Date", "")),
         "title": str(row.get("Movie_Title", "")),
         "tmdb_id": row.get("TMDB_ID", ""),
+        "imdb_id": str(row.get("IMDb_ID", "")),
         "platform": str(row.get("OTT_Platform", "")),
         "genre": str(row.get("Genre", "")),
         "rating": rating,
         "review": str(row.get("User_Review", "")),
         "shared": str(row.get("Shared_Status", "")).strip().upper() == "TRUE",
+        # Blank for rows logged before these columns existed, and for films the
+        # source has no score for.
+        "tmdb_rating": row.get("TMDB_Rating", ""),
+        "imdb_rating": row.get("IMDb_Rating", ""),
+        "rt_rating": row.get("RT_Rating", ""),
+        "metacritic": row.get("Metacritic", ""),
+        "synopsis": str(row.get("Synopsis", "")),
     }
 
 
@@ -240,29 +310,31 @@ def add_to_journal(
     except ValueError as exc:
         return {"status": "error", "error_message": str(exc)}
 
-    # Enrich from TMDB so Movie_Title, TMDB_ID and Genre stay canonical.
+    # Enrich from TMDB so Movie_Title, TMDB_ID and Genre stay canonical, then
+    # snapshot the critic scores as they stood when this was logged.
     resolved_title = str(title).strip()
-    tmdb_id: int | str = ""
-    genre = ""
-    details = tmdb.fetch_movie_details(resolved_title)
-    if details["status"] == "success":
-        resolved_title = details["title"] or resolved_title
-        tmdb_id = details["tmdb_id"]
-        genre = ", ".join(details["genres"])
-        if not platform and details["streaming_in_india"]:
-            platform = details["streaming_in_india"][0]
+    meta = _movie_metadata(resolved_title)
+    resolved_title = meta["title"] or resolved_title
+    if not platform and meta["platform"]:
+        platform = meta["platform"]
 
     log_id = _new_log_id()
     row = [
         log_id,
         watch_date_value,
         resolved_title,
-        tmdb_id,
+        meta["tmdb_id"],
         str(platform).strip(),
-        genre,
+        meta["genre"],
         rating_value if rating_value else "",
         str(review).strip(),
         "FALSE",
+        meta["imdb_id"],
+        meta["tmdb_rating"],
+        meta["imdb_rating"],
+        meta["rt_rating"],
+        meta["metacritic"],
+        meta["synopsis"],
     ]
 
     try:
@@ -286,12 +358,18 @@ def add_to_journal(
             "log_id": log_id,
             "watch_date": watch_date_value,
             "title": resolved_title,
-            "tmdb_id": tmdb_id,
+            "tmdb_id": meta["tmdb_id"],
+            "imdb_id": meta["imdb_id"],
             "platform": str(platform).strip(),
-            "genre": genre,
+            "genre": meta["genre"],
             "rating": rating_value,
             "review": str(review).strip(),
             "shared": False,
+            "tmdb_rating": meta["tmdb_rating"],
+            "imdb_rating": meta["imdb_rating"],
+            "rt_rating": meta["rt_rating"],
+            "metacritic": meta["metacritic"],
+            "synopsis": meta["synopsis"],
         },
     }
 
@@ -344,9 +422,15 @@ def _to_watchlist_entry(row: dict[str, Any]) -> dict[str, Any]:
         "added_date": str(row.get("Added_Date", "")),
         "title": str(row.get("Movie_Title", "")),
         "tmdb_id": row.get("TMDB_ID", ""),
+        "imdb_id": str(row.get("IMDb_ID", "")),
         "platform": str(row.get("OTT_Platform", "")),
         "genre": str(row.get("Genre", "")),
         "notes": str(row.get("Notes", "")),
+        "tmdb_rating": row.get("TMDB_Rating", ""),
+        "imdb_rating": row.get("IMDb_Rating", ""),
+        "rt_rating": row.get("RT_Rating", ""),
+        "metacritic": row.get("Metacritic", ""),
+        "synopsis": str(row.get("Synopsis", "")),
     }
 
 
@@ -381,16 +465,8 @@ def add_to_watchlist(
         return {"status": "error", "error_message": "A movie title is required."}
 
     resolved_title = str(title).strip()
-    tmdb_id: int | str = ""
-    genre = ""
-    platform = ""
-    details = tmdb.fetch_movie_details(resolved_title)
-    if details["status"] == "success":
-        resolved_title = details["title"] or resolved_title
-        tmdb_id = details["tmdb_id"]
-        genre = ", ".join(details["genres"])
-        if details["streaming_in_india"]:
-            platform = details["streaming_in_india"][0]
+    meta = _movie_metadata(resolved_title)
+    resolved_title = meta["title"] or resolved_title
 
     try:
         existing = _match_watchlist_rows(_read_watchlist_rows(), resolved_title)
@@ -408,10 +484,16 @@ def add_to_watchlist(
                 watchlist_id,
                 date.today().isoformat(),
                 resolved_title,
-                tmdb_id,
-                platform,
-                genre,
+                meta["tmdb_id"],
+                meta["platform"],
+                meta["genre"],
                 str(notes).strip(),
+                meta["imdb_id"],
+                meta["tmdb_rating"],
+                meta["imdb_rating"],
+                meta["rt_rating"],
+                meta["metacritic"],
+                meta["synopsis"],
             ],
             value_input_option="USER_ENTERED",
         )
@@ -426,10 +508,16 @@ def add_to_watchlist(
             "watchlist_id": watchlist_id,
             "added_date": date.today().isoformat(),
             "title": resolved_title,
-            "tmdb_id": tmdb_id,
-            "platform": platform,
-            "genre": genre,
+            "tmdb_id": meta["tmdb_id"],
+            "imdb_id": meta["imdb_id"],
+            "platform": meta["platform"],
+            "genre": meta["genre"],
             "notes": str(notes).strip(),
+            "tmdb_rating": meta["tmdb_rating"],
+            "imdb_rating": meta["imdb_rating"],
+            "rt_rating": meta["rt_rating"],
+            "metacritic": meta["metacritic"],
+            "synopsis": meta["synopsis"],
         },
     }
 

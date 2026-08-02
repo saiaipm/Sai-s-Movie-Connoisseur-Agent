@@ -398,6 +398,9 @@ def fetch_movie_details(title_or_id: str) -> dict:
     return {
         "status": "success",
         "tmdb_id": movie.get("id", movie_id),
+        # Already in the /movie/{id} body — the join key for OMDb's critic
+        # ratings, so no extra lookup is needed to bridge the two.
+        "imdb_id": movie.get("imdb_id") or "",
         "title": movie.get("title", ""),
         "original_title": movie.get("original_title", ""),
         "tagline": movie.get("tagline", ""),

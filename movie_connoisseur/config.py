@@ -38,6 +38,11 @@ def get_secret(name: str, default: str = "") -> str:
 # --- Credentials ----------------------------------------------------------
 
 TMDB_API_KEY = get_secret("TMDB_API_KEY")
+
+# OMDb supplies the IMDb, Rotten Tomatoes and Metacritic ratings that TMDB does
+# not carry. Optional: without it those columns simply stay empty.
+OMDB_API_KEY = get_secret("OMDB_API_KEY")
+OMDB_BASE_URL = get_secret("OMDB_BASE_URL", "https://www.omdbapi.com/")
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY") or get_secret("GOOGLE_API_KEY")
 SPREADSHEET_KEY = get_secret("SPREADSHEET_KEY")
 
@@ -375,6 +380,15 @@ JOURNAL_HEADERS: list[str] = [
     "User_Rating",
     "User_Review",
     "Shared_Status",
+    # Added in v1.2. Ratings keep their native scales: TMDB and IMDb are out of
+    # 10, Rotten Tomatoes and Metacritic out of 100. Any of them can be blank —
+    # measured coverage on Indian films is IMDb 100%, RT 83%, Metacritic 33%.
+    "IMDb_ID",
+    "TMDB_Rating",
+    "IMDb_Rating",
+    "RT_Rating",
+    "Metacritic",
+    "Synopsis",
 ]
 
 # "Want to watch" lives in its own worksheet rather than as a flag on the
@@ -390,6 +404,14 @@ WATCHLIST_HEADERS: list[str] = [
     "OTT_Platform",
     "Genre",
     "Notes",
+    # Same six as the journal, minus User_Rating — you have not watched it yet,
+    # so the critics' scores are exactly what helps you choose.
+    "IMDb_ID",
+    "TMDB_Rating",
+    "IMDb_Rating",
+    "RT_Rating",
+    "Metacritic",
+    "Synopsis",
 ]
 
 GOOGLE_API_SCOPES = [
